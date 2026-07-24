@@ -107,7 +107,7 @@ jobs:
           path: |
             ${{ runner.temp }}/burning-progress-downloads
             ${{ runner.temp }}/static-deps/${{ matrix.toolchain }}
-          key: burning-progress-deps-v3-${{ matrix.toolchain }}-${{ hashFiles('third_party/*.tar.gz') }}
+          key: burning-progress-deps-v4-size-${{ matrix.toolchain }}-${{ hashFiles('third_party/*.tar.gz') }}
 
       - name: Download toolchain and BusyBox rootfs
         env:
@@ -166,44 +166,51 @@ jobs:
           compiler_prefix=${compiler_path%-gcc}
           archiver=${compiler_prefix}-ar
           ranlib=${compiler_prefix}-ranlib
+          stripper=${compiler_prefix}-strip
           sysroot=$($compiler_path -print-sysroot)
           test -d "$sysroot"
           test -x "$archiver"
           test -x "$ranlib"
+          test -x "$stripper"
           command -v "$QEMU_RUNNER"
 
           echo "$compiler_bin" >> "$GITHUB_PATH"
           echo "MUSL_CC=$compiler_path" >> "$GITHUB_ENV"
           echo "MUSL_AR=$archiver" >> "$GITHUB_ENV"
           echo "MUSL_RANLIB=$ranlib" >> "$GITHUB_ENV"
+          echo "MUSL_STRIP=$stripper" >> "$GITHUB_ENV"
           echo "MUSL_SYSROOT=$sysroot" >> "$GITHUB_ENV"
           echo "QEMU_RUNNER=$QEMU_RUNNER" >> "$GITHUB_ENV"
           "$compiler_path" --version
 
-      - name: Build static zlib and libarchive
+      - name: Build debug and release static dependencies
         env:
           TOOLCHAIN: ${{ matrix.toolchain }}
         run: |
           set -euo pipefail
           sources="$GITHUB_WORKSPACE/third_party"
-          prefix="$RUNNER_TEMP/static-deps/$TOOLCHAIN"
-          build_root="$RUNNER_TEMP/static-deps-build/$TOOLCHAIN"
+          build_variant() {
+            variant=$1
+            variant_cflags=$2
+            prefix="$RUNNER_TEMP/static-deps/$TOOLCHAIN/$variant"
+            build_root="$RUNNER_TEMP/static-deps-build/$TOOLCHAIN/$variant"
 
-          if [ -s "$prefix/lib/libarchive.a" ] && \
-             [ -s "$prefix/lib/libz.a" ] && \
-             [ -s "$prefix/include/archive.h" ] && \
-             [ -s "$prefix/include/zlib.h" ]; then
-            echo "Using cached static libraries from $prefix"
-          else
+            if [ -s "$prefix/lib/libarchive.a" ] && \
+               [ -s "$prefix/lib/libz.a" ] && \
+               [ -s "$prefix/include/archive.h" ] && \
+               [ -s "$prefix/include/zlib.h" ]; then
+              echo "Using cached $variant static libraries from $prefix"
+              return
+            fi
+
             rm -rf "$prefix" "$build_root"
             mkdir -p "$prefix" "$build_root/zlib" "$build_root/libarchive"
-
             tar -xzf "$sources/$ZLIB_ARCHIVE" \
               -C "$build_root/zlib" --strip-components=1
             (
               cd "$build_root/zlib"
               CHOST="$TOOLCHAIN" CC="$MUSL_CC" AR="$MUSL_AR" \
-                RANLIB="$MUSL_RANLIB" CFLAGS=-O2 \
+                RANLIB="$MUSL_RANLIB" CFLAGS="$variant_cflags" \
                 ./configure --static --prefix="$prefix"
               make -j"$(nproc)"
               make install
@@ -215,7 +222,7 @@ jobs:
             (
               cd "$build_root/libarchive-build"
               CC="$MUSL_CC" AR="$MUSL_AR" RANLIB="$MUSL_RANLIB" \
-                CFLAGS=-O2 CPPFLAGS="-I$prefix/include" \
+                CFLAGS="$variant_cflags" CPPFLAGS="-I$prefix/include" \
                 LDFLAGS="-L$prefix/lib" PKG_CONFIG=false \
                 "$build_root/libarchive/configure" \
                   --build="$("$build_root/libarchive/build/autoconf/config.guess")" \
@@ -243,34 +250,83 @@ jobs:
               make -j"$(nproc)"
               make install
             )
-          fi
+          }
 
-          test -s "$prefix/lib/libarchive.a"
-          test -s "$prefix/lib/libz.a"
-          echo "STATIC_DEPS=$prefix" >> "$GITHUB_ENV"
+          debug_cflags='-Og -g3 -fno-omit-frame-pointer -ffunction-sections -fdata-sections'
+          release_cflags='-Os -g0 -fno-asynchronous-unwind-tables -fno-unwind-tables -ffunction-sections -fdata-sections'
+          build_variant debug "$debug_cflags"
+          build_variant release "$release_cflags"
 
-      - name: Build target programs and tests
+          debug_prefix="$RUNNER_TEMP/static-deps/$TOOLCHAIN/debug"
+          release_prefix="$RUNNER_TEMP/static-deps/$TOOLCHAIN/release"
+          echo "DEBUG_STATIC_DEPS=$debug_prefix" >> "$GITHUB_ENV"
+          echo "RELEASE_STATIC_DEPS=$release_prefix" >> "$GITHUB_ENV"
+
+      - name: Build debug and stripped-release programs
         run: |
           set -euo pipefail
+          debug_build="$RUNNER_TEMP/debug-build"
+          rm -rf "$debug_build"
+          make BUILD_DIR="$debug_build" CC="$MUSL_CC" \
+            CPPFLAGS="-D_GNU_SOURCE -Iinclude -I$DEBUG_STATIC_DEPS/include" \
+            CFLAGS="-Og -g3 -fno-omit-frame-pointer -ffunction-sections -fdata-sections -std=c99 -Wall -Wextra -Wpedantic -Werror" \
+            LDFLAGS="-static -L$DEBUG_STATIC_DEPS/lib -Wl,--gc-sections -Wl,--build-id=none" \
+            all
+
           make clean
           make CC="$MUSL_CC" \
-            CPPFLAGS="-D_GNU_SOURCE -Iinclude -I$STATIC_DEPS/include" \
-            LDFLAGS="-static -L$STATIC_DEPS/lib" \
+            CPPFLAGS="-D_GNU_SOURCE -Iinclude -I$RELEASE_STATIC_DEPS/include" \
+            CFLAGS="-Os -g0 -fno-asynchronous-unwind-tables -fno-unwind-tables -ffunction-sections -fdata-sections -std=c99 -Wall -Wextra -Wpedantic -Werror" \
+            LDFLAGS="-static -L$RELEASE_STATIC_DEPS/lib -Wl,--gc-sections -Wl,--build-id=none" \
             all \
             build/tests/test_config \
             build/tests/test_install \
             build/tests/test_cpio
+          echo "DEBUG_BUILD=$debug_build" >> "$GITHUB_ENV"
 
-      - name: Verify binary linkage
+      - name: Verify debug symbols and strip release programs
         run: |
           set -euo pipefail
+          for binary in \
+            "$DEBUG_BUILD/bin/burning-init" \
+            "$DEBUG_BUILD/bin/burning-progress"; do
+            description=$(file "$binary")
+            echo "$description"
+            grep -qi 'statically linked' <<<"$description"
+            sections=$(readelf -S "$binary")
+            program_headers=$(readelf -l "$binary")
+            dynamic=$(readelf -d "$binary" 2>/dev/null || true)
+            grep -q '\.debug_info' <<<"$sections"
+            ! grep -q 'INTERP' <<<"$program_headers"
+            ! grep -q 'NEEDED' <<<"$dynamic"
+          done
+          debug_init_size=$(stat -c %s "$DEBUG_BUILD/bin/burning-init")
+          debug_progress_size=$(stat -c %s "$DEBUG_BUILD/bin/burning-progress")
+          printf 'debugSize burning-init=%s burning-progress=%s\n' \
+            "$debug_init_size" "$debug_progress_size"
+
+          "$MUSL_STRIP" --strip-all \
+            build/bin/burning-init \
+            build/bin/burning-progress
           for binary in build/bin/burning-init build/bin/burning-progress; do
             description=$(file "$binary")
             echo "$description"
             grep -qi 'statically linked' <<<"$description"
-            ! readelf -l "$binary" | grep -q 'INTERP'
-            ! readelf -d "$binary" 2>/dev/null | grep -q 'NEEDED'
+            grep -qi 'stripped' <<<"$description"
+            sections=$(readelf -S "$binary")
+            program_headers=$(readelf -l "$binary")
+            dynamic=$(readelf -d "$binary" 2>/dev/null || true)
+            ! grep -Eq '\.debug_|\.symtab' <<<"$sections"
+            ! grep -q 'INTERP' <<<"$program_headers"
+            ! grep -q 'NEEDED' <<<"$dynamic"
           done
+
+          init_size=$(stat -c %s build/bin/burning-init)
+          progress_size=$(stat -c %s build/bin/burning-progress)
+          printf 'releaseSize burning-init=%s burning-progress=%s\n' \
+            "$init_size" "$progress_size"
+          test "$init_size" -le 262144
+          test "$progress_size" -le 786432
 
       - name: Prepare matching BusyBox rootfs
         env:
@@ -385,34 +441,59 @@ jobs:
           test -L "$host_root/sbin/init"
           test "$(readlink "$host_root/sbin/init")" = ../lib/systemd/systemd
 
-      - name: Package target programs
+      - name: Package release and debug programs
         env:
           TOOLCHAIN: ${{ matrix.toolchain }}
         run: |
           set -euo pipefail
-          package_name="burning-progress-${TOOLCHAIN}-static"
-          package_root="$RUNNER_TEMP/package/$package_name"
           artifact_root="$RUNNER_TEMP/artifacts"
-          mkdir -p "$package_root" "$artifact_root"
-          install -m 0755 build/bin/burning-init "$package_root/burning-init"
-          install -m 0755 build/bin/burning-progress "$package_root/burning-progress"
-          install -m 0644 LICENSE "$package_root/LICENSE"
-          install -m 0644 THIRD_PARTY_LICENSES.md \
-            "$package_root/THIRD_PARTY_LICENSES.md"
-          tar -czf "$artifact_root/$package_name.tar.gz" \
-            -C "$RUNNER_TEMP/package" "$package_name"
-          (
-            cd "$artifact_root"
-            sha256sum "$package_name.tar.gz" > "$package_name.tar.gz.sha256"
-          )
+          mkdir -p "$artifact_root"
 
-      - name: Upload target package
+          package_variant() {
+            package_name=$1
+            binary_root=$2
+            package_root="$RUNNER_TEMP/package/$package_name"
+            mkdir -p "$package_root"
+            install -m 0755 "$binary_root/burning-init" \
+              "$package_root/burning-init"
+            install -m 0755 "$binary_root/burning-progress" \
+              "$package_root/burning-progress"
+            install -m 0644 LICENSE "$package_root/LICENSE"
+            install -m 0644 THIRD_PARTY_LICENSES.md \
+              "$package_root/THIRD_PARTY_LICENSES.md"
+            tar -czf "$artifact_root/$package_name.tar.gz" \
+              -C "$RUNNER_TEMP/package" "$package_name"
+            (
+              cd "$artifact_root"
+              sha256sum "$package_name.tar.gz" \
+                > "$package_name.tar.gz.sha256"
+            )
+          }
+
+          package_variant \
+            "burning-progress-${TOOLCHAIN}-static" \
+            "$GITHUB_WORKSPACE/build/bin"
+          package_variant \
+            "burning-progress-${TOOLCHAIN}-static-debug" \
+            "$DEBUG_BUILD/bin"
+
+      - name: Upload stripped release package
         uses: actions/upload-artifact@v4
         with:
           name: burning-progress-${{ matrix.toolchain }}-static
           path: |
-            ${{ runner.temp }}/artifacts/*.tar.gz
-            ${{ runner.temp }}/artifacts/*.sha256
+            ${{ runner.temp }}/artifacts/burning-progress-${{ matrix.toolchain }}-static.tar.gz
+            ${{ runner.temp }}/artifacts/burning-progress-${{ matrix.toolchain }}-static.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload debug-symbol package
+        uses: actions/upload-artifact@v4
+        with:
+          name: burning-progress-${{ matrix.toolchain }}-static-debug
+          path: |
+            ${{ runner.temp }}/artifacts/burning-progress-${{ matrix.toolchain }}-static-debug.tar.gz
+            ${{ runner.temp }}/artifacts/burning-progress-${{ matrix.toolchain }}-static-debug.tar.gz.sha256
           if-no-files-found: error
           retention-days: 14
 

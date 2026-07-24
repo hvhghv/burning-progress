@@ -92,19 +92,31 @@ build/bin/burning-init
 build/bin/burning-progress
 ```
 
-发布到目标设备时建议使用与设备架构匹配的 musl 静态链接版本：
+构建 musl 静态调试版和发布版：
 
 ```sh
 make static
 ```
 
-该目标默认使用 `musl-gcc`，并要求工具链可找到静态 `libarchive.a` 与 `libz.a`。也可以显式指定交叉编译器和静态依赖目录：
+输出目录：
+
+```text
+build/static-debug/bin/    -Og、-g3，保留调试符号
+build/static/bin/          -Os、section GC、strip --strip-all
+```
+
+部署和制作 recovery rootfs 应使用 `build/static/bin/`。`static-debug` 用于 GDB、崩溃定位和源码级调试，不应作为空间受限设备的正式发布文件。
+
+Actions 中的调试包会同时使用带 `-g3` 的 zlib 和 libarchive；本地调试包能否进入第三方库源码取决于所提供静态库是否包含调试信息。CI 暂以 256 KiB 和 768 KiB 分别作为发布版 `burning-init`、`burning-progress` 的防回归上限。
+
+该目标默认使用 `musl-gcc` 和 `strip`，并要求工具链可找到静态 `libarchive.a` 与 `libz.a`。也可以显式指定交叉编译器、strip 和静态依赖目录：
 
 ```sh
 make clean
-make CC=/path/to/aarch64-linux-musl-gcc \
+make MUSL_CC=/path/to/aarch64-linux-musl-gcc \
+  MUSL_STRIP=/path/to/aarch64-linux-musl-strip \
   CPPFLAGS="-D_GNU_SOURCE -Iinclude -I/path/to/static-deps/include" \
-  LDFLAGS="-static -L/path/to/static-deps/lib" all
+  LDFLAGS="-L/path/to/static-deps/lib" static
 ```
 
 ## 持续集成
@@ -113,11 +125,12 @@ GitHub Actions 会执行以下检查：
 
 - 在 Ubuntu 22.04 上完成本机严格 C99 构建和全部单元测试。
 - 使用 `hvhghv/musl-gcc` 工具链构建 x86_64、ARM、AArch64 和 RISC-V 64。
-- 每种架构只生成 static 版本，并检查二进制不存在动态加载器依赖。
+- 每种架构生成 `static-debug` 与 strip 后的 `static` 两套包，并检查二进制不存在动态加载器依赖。
+- 发布版使用 `-Os`、function/data sections 和链接器垃圾回收，并设置体积回归上限。
 - 使用 QEMU 和对应架构的 BusyBox 1.38.0 rootfs 运行目标测试程序。
 - 将目标程序注入 BusyBox rootfs，实际执行 CPIO 与 tar.gz 打包、解包、校验和隔离目录安装测试。
 - 使用 `qemu-system-x86_64` 从 tar.gz recovery rootfs 启动真实 Linux 客体内核，验证 PID 1、挂载、`pivot_root` 和旧根目录卸载。
-- 将两个程序打包为带 SHA-256 校验文件的 Actions artifact。
+- 将调试版和发布版分别打包为带 SHA-256 校验文件的 Actions artifact。
 
 测试 rootfs 来自 [`hvhghv/cross-software` 的 `v1.38.0-busybox` release](https://github.com/hvhghv/cross-software/releases/tag/v1.38.0-busybox)。上游 rootfs 中的 BusyBox 使用动态 musl，但本项目注入、测试和发布的 `burning-init` 与 `burning-progress` 均为静态 musl 程序。用户态 QEMU 矩阵负责跨架构程序测试；额外的 x86_64 QEMU system job 使用真实客体内核验证完整根切换流程。ARM、AArch64、RISC-V 和具体设备驱动仍需对应虚拟机或实际设备验证。
 
