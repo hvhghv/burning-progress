@@ -52,7 +52,7 @@ jobs:
           file build/bin/burning-init build/bin/burning-progress
 
   musl-build-test:
-    name: ${{ matrix.toolchain }} (${{ matrix.linkage }})
+    name: ${{ matrix.toolchain }} (static)
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     strategy:
@@ -63,42 +63,18 @@ jobs:
             toolchain_asset: musl-toolchain-x86_64.tar.gz
             rootfs_asset: busybox-rootfs-1.38.0-x86_64-linux-musl-dynamic.tar.gz
             qemu: qemu-x86_64-static
-            linkage: dynamic
-          - toolchain: x86_64-linux-musl
-            toolchain_asset: musl-toolchain-x86_64.tar.gz
-            rootfs_asset: busybox-rootfs-1.38.0-x86_64-linux-musl-dynamic.tar.gz
-            qemu: qemu-x86_64-static
-            linkage: static
           - toolchain: arm-linux-musleabi
             toolchain_asset: musl-toolchain-arm.tar.gz
             rootfs_asset: busybox-rootfs-1.38.0-arm-linux-musleabi-dynamic.tar.gz
             qemu: qemu-arm-static
-            linkage: dynamic
-          - toolchain: arm-linux-musleabi
-            toolchain_asset: musl-toolchain-arm.tar.gz
-            rootfs_asset: busybox-rootfs-1.38.0-arm-linux-musleabi-dynamic.tar.gz
-            qemu: qemu-arm-static
-            linkage: static
           - toolchain: aarch64-linux-musl
             toolchain_asset: musl-toolchain-aarch64.tar.gz
             rootfs_asset: busybox-rootfs-1.38.0-aarch64-linux-musl-dynamic.tar.gz
             qemu: qemu-aarch64-static
-            linkage: dynamic
-          - toolchain: aarch64-linux-musl
-            toolchain_asset: musl-toolchain-aarch64.tar.gz
-            rootfs_asset: busybox-rootfs-1.38.0-aarch64-linux-musl-dynamic.tar.gz
-            qemu: qemu-aarch64-static
-            linkage: static
           - toolchain: riscv64-linux-musl
             toolchain_asset: musl-toolchain-riscv64.tar.gz
             rootfs_asset: busybox-rootfs-1.38.0-riscv64-linux-musl-dynamic.tar.gz
             qemu: qemu-riscv64-static
-            linkage: dynamic
-          - toolchain: riscv64-linux-musl
-            toolchain_asset: musl-toolchain-riscv64.tar.gz
-            rootfs_asset: busybox-rootfs-1.38.0-riscv64-linux-musl-dynamic.tar.gz
-            qemu: qemu-riscv64-static
-            linkage: static
 
     env:
       MUSL_RELEASE_BASE: https://github.com/hvhghv/musl-gcc/releases/download/musl-gcc
@@ -180,35 +156,23 @@ jobs:
           "$compiler_path" --version
 
       - name: Build target programs and tests
-        env:
-          LINKAGE: ${{ matrix.linkage }}
         run: |
           set -euo pipefail
-          linker_flags=
-          if [ "$LINKAGE" = static ]; then
-            linker_flags=-static
-          fi
-
           make clean
-          make CC="$MUSL_CC" LDFLAGS="$linker_flags" \
+          make CC="$MUSL_CC" LDFLAGS=-static \
             all \
             build/tests/test_config \
             build/tests/test_install \
             build/tests/test_cpio
 
       - name: Verify binary linkage
-        env:
-          LINKAGE: ${{ matrix.linkage }}
         run: |
           set -euo pipefail
           for binary in build/bin/burning-init build/bin/burning-progress; do
             description=$(file "$binary")
             echo "$description"
-            if [ "$LINKAGE" = static ]; then
-              grep -qi 'statically linked' <<<"$description"
-            else
-              grep -qi 'dynamically linked' <<<"$description"
-            fi
+            grep -qi 'statically linked' <<<"$description"
+            ! readelf -l "$binary" | grep -q 'INTERP'
           done
 
       - name: Prepare matching BusyBox rootfs
@@ -307,10 +271,9 @@ jobs:
       - name: Package target programs
         env:
           TOOLCHAIN: ${{ matrix.toolchain }}
-          LINKAGE: ${{ matrix.linkage }}
         run: |
           set -euo pipefail
-          package_name="burning-progress-${TOOLCHAIN}-${LINKAGE}"
+          package_name="burning-progress-${TOOLCHAIN}-static"
           package_root="$RUNNER_TEMP/package/$package_name"
           artifact_root="$RUNNER_TEMP/artifacts"
           mkdir -p "$package_root" "$artifact_root"
@@ -326,7 +289,7 @@ jobs:
       - name: Upload target package
         uses: actions/upload-artifact@v4
         with:
-          name: burning-progress-${{ matrix.toolchain }}-${{ matrix.linkage }}
+          name: burning-progress-${{ matrix.toolchain }}-static
           path: |
             ${{ runner.temp }}/artifacts/*.tar.gz
             ${{ runner.temp }}/artifacts/*.sha256

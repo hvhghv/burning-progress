@@ -90,13 +90,13 @@ GitHub Actions 会执行以下检查：
 
 - 在 Ubuntu 22.04 上完成本机严格 C99 构建和全部单元测试。
 - 使用 `hvhghv/musl-gcc` 工具链构建 x86_64、ARM、AArch64 和 RISC-V 64。
-- 每种架构分别生成并检查 dynamic、static 两种链接版本。
+- 每种架构只生成 static 版本，并检查二进制不存在动态加载器依赖。
 - 使用 QEMU 和对应架构的 BusyBox 1.38.0 rootfs 运行目标测试程序。
 - 将目标程序注入 BusyBox rootfs，实际执行 CPIO 打包、校验和隔离目录安装测试。
 - 使用 `qemu-system-x86_64` 启动真实 Linux 客体内核，验证 PID 1、挂载、`pivot_root` 和旧根目录卸载。
 - 将两个程序打包为带 SHA-256 校验文件的 Actions artifact。
 
-测试 rootfs 来自 [`hvhghv/cross-software` 的 `v1.38.0-busybox` release](https://github.com/hvhghv/cross-software/releases/tag/v1.38.0-busybox)。用户态 QEMU 矩阵负责跨架构程序测试；额外的 x86_64 QEMU system job 使用真实客体内核验证完整根切换流程。ARM、AArch64、RISC-V 和具体设备驱动仍需对应虚拟机或实际设备验证。
+测试 rootfs 来自 [`hvhghv/cross-software` 的 `v1.38.0-busybox` release](https://github.com/hvhghv/cross-software/releases/tag/v1.38.0-busybox)。上游 rootfs 中的 BusyBox 使用动态 musl，但本项目注入、测试和发布的 `burning-init` 与 `burning-progress` 均为静态 musl 程序。用户态 QEMU 矩阵负责跨架构程序测试；额外的 x86_64 QEMU system job 使用真实客体内核验证完整根切换流程。ARM、AArch64、RISC-V 和具体设备驱动仍需对应虚拟机或实际设备验证。
 
 ## 在临时根目录中测试安装
 
