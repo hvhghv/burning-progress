@@ -267,8 +267,8 @@ static int enter_ram_root(int console)
         console_printf(console, "Cannot mount recovery tmpfs: %s\n", strerror(errno));
         return -1;
     }
-    if (bp_cpio_extract(BP_ROOTFS_PATH, BP_NEW_ROOT, &info,
-                        error, sizeof(error)) != 0) {
+    if (bp_rootfs_extract(BP_ROOTFS_PATH, BP_NEW_ROOT, &info,
+                          error, sizeof(error)) != 0) {
         console_printf(console, "Cannot extract recovery rootfs: %s\n", error);
         (void)umount(BP_NEW_ROOT);
         return -1;

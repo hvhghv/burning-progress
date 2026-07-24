@@ -38,6 +38,11 @@ enum bp_entry_mode {
     BP_ENTRY_HANDOFF
 };
 
+enum bp_rootfs_format {
+    BP_ROOTFS_CPIO = 0,
+    BP_ROOTFS_TAR_GZIP
+};
+
 struct bp_host_config {
     unsigned int version;
     unsigned int timeout;
@@ -51,6 +56,7 @@ struct bp_runtime_config {
 };
 
 struct bp_rootfs_info {
+    enum bp_rootfs_format format;
     size_t entries;
     uint64_t data_bytes;
     struct bp_runtime_config runtime;
@@ -98,6 +104,21 @@ int bp_cpio_verify(const char *archive, struct bp_rootfs_info *info,
                    char *error, size_t error_size);
 int bp_cpio_extract(const char *archive, const char *destination,
                     struct bp_rootfs_info *info, char *error, size_t error_size);
+int bp_tar_gzip_pack(const char *source, const char *output,
+                     struct bp_rootfs_info *info, char *error, size_t error_size);
+int bp_tar_gzip_verify(const char *archive, struct bp_rootfs_info *info,
+                       char *error, size_t error_size);
+int bp_tar_gzip_extract(const char *archive, const char *destination,
+                        struct bp_rootfs_info *info, char *error, size_t error_size);
+const char *bp_rootfs_format_name(enum bp_rootfs_format format);
+int bp_rootfs_format_parse(const char *text, enum bp_rootfs_format *format);
+int bp_rootfs_pack(const char *source, const char *output,
+                   enum bp_rootfs_format format, struct bp_rootfs_info *info,
+                   char *error, size_t error_size);
+int bp_rootfs_verify(const char *archive, struct bp_rootfs_info *info,
+                     char *error, size_t error_size);
+int bp_rootfs_extract(const char *archive, const char *destination,
+                      struct bp_rootfs_info *info, char *error, size_t error_size);
 int bp_rootfs_install(const char *root, const char *archive,
                       struct bp_rootfs_info *info, char *error, size_t error_size);
 int bp_rootfs_verify_installed(const char *root, struct bp_rootfs_info *info,

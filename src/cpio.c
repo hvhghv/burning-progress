@@ -560,6 +560,7 @@ int bp_cpio_verify(const char *archive, struct bp_rootfs_info *info,
     }
     info->entries = paths.count;
     info->data_bytes = data_bytes;
+    info->format = BP_ROOTFS_CPIO;
     result = 0;
 
 cleanup:
@@ -872,7 +873,7 @@ int bp_rootfs_install(const char *root, const char *archive,
     char checksum[128];
     int length;
 
-    if (bp_cpio_verify(archive, info, error, error_size) != 0 ||
+    if (bp_rootfs_verify(archive, info, error, error_size) != 0 ||
         bp_path(destination, sizeof(destination), root, BP_ROOTFS_PATH,
                 error, error_size) != 0 ||
         bp_path(checksum_path, sizeof(checksum_path), root, BP_ROOTFS_SHA256_PATH,
@@ -920,5 +921,5 @@ int bp_rootfs_verify_installed(const char *root, struct bp_rootfs_info *info,
         bp_error_set(error, error_size, "installed rootfs SHA-256 mismatch");
         return -1;
     }
-    return bp_cpio_verify(archive, info, error, error_size);
+    return bp_rootfs_verify(archive, info, error, error_size);
 }

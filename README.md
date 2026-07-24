@@ -2,7 +2,7 @@
 
 [![Build and test](https://github.com/hvhghv/burning-progress/actions/workflows/build-test.yml/badge.svg)](https://github.com/hvhghv/burning-progress/actions/workflows/build-test.yml)
 
-Burning Progress 是一个纯 C99 编写的 Linux 预启动恢复环境启动器。它通过在安装时接管 `/sbin/init`，在正常 init 启动前提供恢复菜单，并可将预先准备的 CPIO 根文件系统展开到 tmpfs 后切换为新的根目录。
+Burning Progress 是一个纯 C99 编写的 Linux 预启动恢复环境启动器。它通过在安装时接管 `/sbin/init`，在正常 init 启动前提供恢复菜单，并可将预先准备的 CPIO 或 tar.gz 根文件系统展开到 tmpfs 后切换为新的根目录。
 
 项目本身不包含具体设备的刷机逻辑。实际刷机、分区、下载固件或启动其他 init 的流程应放在 recovery rootfs 的 `/entry.sh` 及其配套程序中。
 
@@ -16,7 +16,7 @@ Burning Progress 是一个纯 C99 编写的 Linux 预启动恢复环境启动器
 - 支持单次启用和持久启用恢复菜单。
 - 支持 `normal`、`shell`、`poweroff` 三种启动选项。
 - 支持可配置的等待时间和超时默认选项。
-- 支持打包、校验和安装 SVR4 `newc` 格式的 `rootfs.cpio`。
+- 支持打包、校验、解包和安装 SVR4 `newc` CPIO 与 gzip 压缩 tar 根文件系统。
 - 将 recovery rootfs 解压到 tmpfs，并通过 `pivot_root` 切换根文件系统。
 - 支持 `supervised` 和 `handoff` 两种 entry 执行模式。
 - 安装和配置文件更新采用临时文件、`fsync` 和原子替换。
@@ -28,6 +28,7 @@ Burning Progress 是一个纯 C99 编写的 Linux 预启动恢复环境启动器
 .
 |-- Makefile
 |-- LICENSE
+|-- THIRD_PARTY_LICENSES.md
 |-- docs/
 |   `-- IMPLEMENTATION_PLAN.md
 |-- include/
@@ -39,8 +40,10 @@ Burning Progress 是一个纯 C99 编写的 Linux 预启动恢复环境启动器
 |   |-- config.c
 |   |-- cpio.c
 |   |-- install.c
+|   |-- rootfs.c
 |   |-- runtime.c
-|   `-- sha256.c
+|   |-- sha256.c
+|   `-- tar.c
 `-- tests/
     |-- test_config.c
     |-- test_cpio.c
@@ -55,6 +58,13 @@ Burning Progress 是一个纯 C99 编写的 Linux 预启动恢复环境启动器
 - 支持 C99 的 C 编译器
 - GNU Make
 - Linux 系统调用和头文件
+- libarchive 和 zlib 开发文件
+
+Ubuntu/Debian 可安装：
+
+```sh
+sudo apt-get install build-essential libarchive-dev zlib1g-dev
+```
 
 本机开发构建：
 
@@ -77,11 +87,13 @@ build/bin/burning-progress
 make static
 ```
 
-该目标默认使用 `musl-gcc`。也可以显式指定交叉编译器：
+该目标默认使用 `musl-gcc`，并要求工具链可找到静态 `libarchive.a` 与 `libz.a`。也可以显式指定交叉编译器和静态依赖目录：
 
 ```sh
 make clean
-make CC=/path/to/aarch64-linux-musl-gcc LDFLAGS=-static all
+make CC=/path/to/aarch64-linux-musl-gcc \
+  CPPFLAGS="-D_GNU_SOURCE -Iinclude -I/path/to/static-deps/include" \
+  LDFLAGS="-static -L/path/to/static-deps/lib" all
 ```
 
 ## 持续集成
@@ -92,8 +104,8 @@ GitHub Actions 会执行以下检查：
 - 使用 `hvhghv/musl-gcc` 工具链构建 x86_64、ARM、AArch64 和 RISC-V 64。
 - 每种架构只生成 static 版本，并检查二进制不存在动态加载器依赖。
 - 使用 QEMU 和对应架构的 BusyBox 1.38.0 rootfs 运行目标测试程序。
-- 将目标程序注入 BusyBox rootfs，实际执行 CPIO 打包、解包、校验和隔离目录安装测试。
-- 使用 `qemu-system-x86_64` 启动真实 Linux 客体内核，验证 PID 1、挂载、`pivot_root` 和旧根目录卸载。
+- 将目标程序注入 BusyBox rootfs，实际执行 CPIO 与 tar.gz 打包、解包、校验和隔离目录安装测试。
+- 使用 `qemu-system-x86_64` 从 tar.gz recovery rootfs 启动真实 Linux 客体内核，验证 PID 1、挂载、`pivot_root` 和旧根目录卸载。
 - 将两个程序打包为带 SHA-256 校验文件的 Actions artifact。
 
 测试 rootfs 来自 [`hvhghv/cross-software` 的 `v1.38.0-busybox` release](https://github.com/hvhghv/cross-software/releases/tag/v1.38.0-busybox)。上游 rootfs 中的 BusyBox 使用动态 musl，但本项目注入、测试和发布的 `burning-init` 与 `burning-progress` 均为静态 musl 程序。用户态 QEMU 矩阵负责跨架构程序测试；额外的 x86_64 QEMU system job 使用真实客体内核验证完整根切换流程。ARM、AArch64、RISC-V 和具体设备驱动仍需对应虚拟机或实际设备验证。
@@ -178,7 +190,7 @@ entryMode=supervised
 entry=/entry.sh
 ```
 
-打包、解包、校验和安装：
+CPIO 打包、解包、校验和安装：
 
 ```sh
 build/bin/burning-progress rootfs pack ./rootfs --output ./rootfs.cpio
@@ -186,6 +198,18 @@ build/bin/burning-progress rootfs verify ./rootfs.cpio
 build/bin/burning-progress rootfs unpack ./rootfs.cpio --output ./unpacked-rootfs
 sudo build/bin/burning-progress rootfs install ./rootfs.cpio
 ```
+
+tar.gz 使用相同命令；`.tar.gz` 和 `.tgz` 后缀会让 `pack` 自动选择格式，也可用 `--format` 显式指定：
+
+```sh
+build/bin/burning-progress rootfs pack ./rootfs --output ./rootfs.tar.gz
+build/bin/burning-progress rootfs pack ./rootfs --output ./recovery.img --format tar.gz
+build/bin/burning-progress rootfs verify ./rootfs.tar.gz
+build/bin/burning-progress rootfs unpack ./rootfs.tar.gz --output ./unpacked-rootfs
+sudo build/bin/burning-progress rootfs install ./rootfs.tar.gz
+```
+
+`verify`、`unpack`、`install` 和 PID 1 启动流程按文件 magic 检测格式，不依赖文件扩展名。为保持旧版本布局兼容及单文件原子替换，安装后的归档仍统一命名为 `/etc/BurningProcess/rootfs.cpio`，其中内容可以是 CPIO 或 tar.gz。
 
 解包目标目录不存在时会自动创建；如果目录已经存在，则必须为空。归档校验或解包失败时命令返回非零状态。解包不是事务操作，失败后应删除目标目录，不要使用其中可能残留的文件。
 
@@ -196,7 +220,7 @@ sudo build/bin/burning-progress rootfs install ./rootfs.cpio
 /etc/BurningProcess/rootfs.cpio.sha256
 ```
 
-CPIO 打包器不会跟随符号链接，也不允许路径逃逸；socket 会被拒绝。CPIO 不保存 ACL、SELinux 标签和 file capabilities，因此 recovery 环境应优先使用静态程序，或在启动时重新建立所需元数据。
+两种打包器都不会跟随符号链接或跨越挂载点。校验器拒绝绝对路径、`.`/`..` 路径分量、重复路径、硬链接、设备节点、FIFO 和 socket。当前仅支持普通文件、目录和符号链接，不保存 ACL、扩展属性、SELinux 标签、file capabilities 或稀疏文件属性，因此 recovery 环境应优先使用静态程序，或在启动时重新建立所需元数据。
 
 ## Entry 模式
 
@@ -260,7 +284,7 @@ kernel
        `-- 已触发恢复模式 -> exec burning-progress --stage1
                                 |-- normal   -> exec 原 init
                                 |-- poweroff -> 关机
-                                `-- shell    -> tmpfs + 解压 CPIO + pivot_root
+                                 `-- shell    -> tmpfs + 解压 CPIO/tar.gz + pivot_root
                                                 -> burning-progress --stage2
 ```
 
@@ -277,7 +301,7 @@ sudo /sbin/burning-progress uninstall
 ## 安全边界
 
 - 正常启动回退不能代替独立的外部恢复机制。
-- `rootfs.cpio.sha256` 只能检测意外损坏，不能验证发布者身份；不可信更新渠道需要额外的数字签名。
+- `rootfs.cpio.sha256` 只能检测已安装归档的意外损坏，不能验证发布者身份；不可信更新渠道需要额外的数字签名。
 - 刷机镜像必须在卸载旧根目录前复制到内存，或在 recovery 环境中通过网络获取。
 - recovery rootfs 必须自带系统盘卸载后仍需要的程序、共享库、内核模块和固件。
 - CI 已使用 x86_64 完整虚拟机验证真实 PID 1、mount namespace 和 `pivot_root`；其他架构及板级存储、Bootloader 和驱动仍需在对应虚拟机或实际设备上测试。
@@ -286,4 +310,4 @@ sudo /sbin/burning-progress uninstall
 
 ## 许可证
 
-本项目采用 [BSD 3-Clause License](LICENSE)。
+本项目采用 [BSD 3-Clause License](LICENSE)。静态发布程序所含 libarchive 与 zlib 的许可证见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)。

@@ -17,7 +17,7 @@ Two Linux executables will be built with a C99 compiler and Linux system APIs:
 
 - `burning-init`: minimal PID 1 dispatcher installed at `/sbin/burning-init`.
   `/sbin/init` is atomically changed to point to this program.
-- `burning-progress`: installer, configuration utility, CPIO tool, stage 1 boot
+- `burning-progress`: installer, configuration utility, rootfs archive tool, stage 1 boot
   menu, and stage 2 recovery supervisor.
 
 `burning-init` is intentionally small. It only detects the boot trigger and
@@ -43,7 +43,7 @@ implements a menu.
 `install-state` records the installed program version, expected `/sbin/init`
 link target, backup type, and integrity information needed by `uninstall`.
 
-The CPIO root contains its own runtime configuration and does not reuse the
+The recovery root contains its own runtime configuration and does not reuse the
 host configuration after the root switch:
 
 ```text
@@ -112,10 +112,10 @@ Menu results:
 
 Stage 1 performs the following sequence for the shell option:
 
-1. Verify `rootfs.cpio`, its required files, paths, architecture metadata, and
+1. Detect and verify the CPIO or tar.gz rootfs, its required files, paths, and
    memory requirements.
 2. Mount a private `tmpfs` at `/mnt/burning-root`.
-3. Extract the CPIO without allowing absolute paths or parent traversal.
+3. Extract the archive without allowing absolute paths or parent traversal.
 4. Read and validate `/etc/burning-progress.conf` from the extracted root.
 5. Make mount propagation private.
 6. Prepare or move `/dev`, `/proc`, `/sys`, and `/run` into the new root.
@@ -163,7 +163,7 @@ burning-progress enable [--once|--persistent]
 burning-progress disable
 burning-progress config --timeout <seconds>
 burning-progress config --default <normal|shell|poweroff>
-burning-progress rootfs pack <directory> --output <file>
+burning-progress rootfs pack <directory> --output <file> [--format cpio|tar.gz]
 burning-progress rootfs unpack <file> --output <directory>
 burning-progress rootfs verify <file>
 burning-progress rootfs install <file>
@@ -173,19 +173,26 @@ State writes and installation use a same-filesystem temporary file, `fsync`,
 atomic rename, and parent-directory `fsync`. Uninstall restores the backup only
 when `/sbin/init` still matches the installed dispatcher state.
 
-## 9. CPIO Contract
+## 9. Rootfs Archive Contract
 
-- Archive format: SVR4 `newc`.
-- Paths are relative, normalized, and deterministically ordered.
+- Supported formats are SVR4 `newc` CPIO and gzip-compressed tar. Format is
+  detected from file magic during verify, unpack, install, and boot.
+- `pack` defaults to CPIO, infers tar.gz from `.tar.gz` or `.tgz`, and accepts an
+  explicit `--format cpio|tar.gz` override.
+- CPIO paths are relative, normalized, and deterministically ordered.
 - Symlinks are archived as symlinks and are not followed.
-- Sockets are rejected; device nodes and FIFOs require an explicit policy.
+- Absolute paths, parent traversal, duplicate paths, hardlinks, devices, FIFOs,
+  sockets, and unsupported types are rejected.
 - Packing does not cross mount points by default.
 - The output cannot reside inside the packed directory.
 - Unpacking requires a missing or empty destination directory.
 - Installation verifies the archive before atomically replacing
   `/etc/BurningProcess/rootfs.cpio`.
-- Basic CPIO does not preserve ACLs, SELinux labels, or file capabilities;
-  recovery roots should use static programs or recreate required metadata.
+- The installed filename remains `rootfs.cpio` for backward compatibility and
+  atomic replacement; the filename does not imply its content format.
+- Archives do not preserve ACLs, xattrs, SELinux labels, file capabilities, or
+  sparse-file metadata; recovery roots should use static programs or recreate
+  required metadata.
 
 The initial implementation will provide SHA-256 integrity metadata. A release
 intended for untrusted update channels must add signature verification with an
@@ -200,7 +207,7 @@ embedded public key before enabling installation or boot.
   dispatcher or invokes a verified original init/recovery image.
 - `burning-init` falls back to the original init when the trigger cannot be
   evaluated or stage 1 cannot be executed.
-- Stage 1 falls back to the original init on configuration and CPIO failures
+- Stage 1 falls back to the original init on configuration or rootfs failures
   before the root transition.
 - `umount -l` is never accepted as proof that the target disk is safe to flash.
 - Firmware stored on the target disk must be copied to RAM or fetched over the
@@ -213,7 +220,7 @@ embedded public key before enabling installation or boot.
 1. C99 project skeleton, strict config parser, state model, and unit tests.
 2. Management CLI, atomic state writes, install/uninstall transaction, and
    exact preservation of symlink or regular-file init backups.
-3. Deterministic newc pack, verify, safe extraction, and atomic rootfs install.
+3. Deterministic newc and tar.gz pack, verify, safe extraction, and atomic rootfs install.
 4. Minimal `burning-init` dispatcher and stage 1 menu with console I/O.
 5. Linux mount, `pivot_root`, descriptor cleanup, and stage 2 supervision.
 6. Handoff cleanup and PID 1 transfer.
@@ -228,7 +235,7 @@ embedded public key before enabling installation or boot.
 - One-shot and persistent enable states behave deterministically across power
   loss at each atomic-write boundary.
 - Invalid configuration defaults to normal boot.
-- Invalid CPIO content cannot escape the extraction root.
+- Invalid CPIO or tar.gz content cannot escape the extraction root.
 - The old root must be normally unmounted before a system disk is declared
   writable.
 - Supervised children are reaped and shell exit does not terminate PID 1.

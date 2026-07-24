@@ -19,7 +19,7 @@ static void usage(FILE *stream)
             "  disable\n"
             "  config [--timeout SECONDS] [--default normal|shell|poweroff]\n");
     fprintf(stream,
-            "  rootfs pack DIRECTORY --output FILE\n"
+            "  rootfs pack DIRECTORY --output FILE [--format cpio|tar.gz]\n"
             "  rootfs unpack FILE --output DIRECTORY\n"
             "  rootfs verify FILE\n"
             "  rootfs install FILE\n");
@@ -238,6 +238,7 @@ static int command_config(const char *root, int argc, char **argv)
 
 static void print_rootfs_info(const struct bp_rootfs_info *info)
 {
+    printf("format=%s\n", bp_rootfs_format_name(info->format));
     printf("entries=%zu\n", info->entries);
     printf("dataBytes=%llu\n", (unsigned long long)info->data_bytes);
     printf("entryMode=%s\n", bp_entry_mode_name(info->runtime.entry_mode));
@@ -247,17 +248,27 @@ static void print_rootfs_info(const struct bp_rootfs_info *info)
 static int command_rootfs(const char *root, int argc, char **argv)
 {
     struct bp_rootfs_info info;
+    enum bp_rootfs_format format = BP_ROOTFS_CPIO;
     char error[BP_ERROR_CAPACITY] = {0};
     int result;
 
-    if (argc == 4 && strcmp(argv[0], "pack") == 0 &&
-        strcmp(argv[2], "--output") == 0) {
-        result = bp_cpio_pack(argv[1], argv[3], &info, error, sizeof(error));
+    if ((argc == 4 || argc == 6) && strcmp(argv[0], "pack") == 0 &&
+        strcmp(argv[2], "--output") == 0 &&
+        (argc == 4 || (strcmp(argv[4], "--format") == 0 &&
+                       bp_rootfs_format_parse(argv[5], &format) == 0))) {
+        if (argc == 4) {
+            size_t length = strlen(argv[3]);
+            if ((length >= 7U && strcmp(argv[3] + length - 7U, ".tar.gz") == 0) ||
+                (length >= 4U && strcmp(argv[3] + length - 4U, ".tgz") == 0)) {
+                format = BP_ROOTFS_TAR_GZIP;
+            }
+        }
+        result = bp_rootfs_pack(argv[1], argv[3], format, &info, error, sizeof(error));
     } else if (argc == 4 && strcmp(argv[0], "unpack") == 0 &&
                strcmp(argv[2], "--output") == 0) {
-        result = bp_cpio_extract(argv[1], argv[3], &info, error, sizeof(error));
+        result = bp_rootfs_extract(argv[1], argv[3], &info, error, sizeof(error));
     } else if (argc == 2 && strcmp(argv[0], "verify") == 0) {
-        result = bp_cpio_verify(argv[1], &info, error, sizeof(error));
+        result = bp_rootfs_verify(argv[1], &info, error, sizeof(error));
     } else if (argc == 2 && strcmp(argv[0], "install") == 0) {
         if (geteuid() != 0) {
             fprintf(stderr, "burning-progress: rootfs install requires root\n");

@@ -7,13 +7,14 @@ CFLAGS ?= -O2
 CFLAGS += -std=c99 -Wall -Wextra -Wpedantic -Werror
 LDFLAGS ?=
 LDLIBS ?=
+LDLIBS += -larchive -lz
 
 BUILD_DIR := build
 OBJ_DIR := $(BUILD_DIR)/obj
 BIN_DIR := $(BUILD_DIR)/bin
 TEST_DIR := $(BUILD_DIR)/tests
 
-COMMON_SRCS := src/common.c src/config.c src/sha256.c src/install.c src/cpio.c src/runtime.c
+COMMON_SRCS := src/common.c src/config.c src/sha256.c src/install.c src/cpio.c src/tar.c src/rootfs.c src/runtime.c
 COMMON_OBJS := $(COMMON_SRCS:src/%.c=$(OBJ_DIR)/%.o)
 
 .PHONY: all clean test static
