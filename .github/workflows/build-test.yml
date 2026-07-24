@@ -288,7 +288,7 @@ jobs:
             build/bin/burning-progress --root "$host_root" \
             rootfs install "$RECOVERY_ARCHIVE"
 
-          status_output=$("$QEMU_RUNNER" -L "$BUSYBOX_ROOTFS" \
+          status_output=$(sudo "$QEMU_RUNNER" -L "$BUSYBOX_ROOTFS" \
             build/bin/burning-progress --root "$host_root" status)
           printf '%s\n' "$status_output"
           grep -q '^installed=true$' <<<"$status_output"
