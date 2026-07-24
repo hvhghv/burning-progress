@@ -165,6 +165,7 @@ burning-progress config --timeout <seconds>
 burning-progress config --default <normal|shell|poweroff>
 burning-progress rootfs pack <directory> --output <file> [--format cpio|tar.gz]
 burning-progress rootfs unpack <file> --output <directory>
+burning-progress rootfs configure <directory>
 burning-progress rootfs verify <file>
 burning-progress rootfs install <file>
 ```

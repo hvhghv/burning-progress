@@ -266,3 +266,30 @@ int bp_runtime_config_parse(const char *text, struct bp_runtime_config *config,
     free(copy);
     return 0;
 }
+
+int bp_runtime_config_format(const struct bp_runtime_config *config, char *output,
+                             size_t output_size, char *error, size_t error_size)
+{
+    int length;
+
+    if (config->version != BP_CONFIG_VERSION ||
+        (config->entry_mode != BP_ENTRY_SUPERVISED &&
+         config->entry_mode != BP_ENTRY_HANDOFF)) {
+        bp_error_set(error, error_size, "invalid runtime configuration");
+        return -1;
+    }
+    if (bp_validate_entry(config->entry) != 0) {
+        bp_error_set(error, error_size, "invalid entry path: %s", config->entry);
+        return -1;
+    }
+    length = snprintf(output, output_size,
+                      "version=%u\nentryMode=%s\nentry=%s\n",
+                      config->version, bp_entry_mode_name(config->entry_mode),
+                      config->entry);
+    if (length < 0 || (size_t)length >= output_size) {
+        bp_error_set(error, error_size,
+                     "runtime configuration output buffer is too small");
+        return -1;
+    }
+    return 0;
+}

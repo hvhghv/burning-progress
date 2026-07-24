@@ -27,7 +27,7 @@ STATIC_RELEASE_DIR := $(BUILD_DIR)/static
 COMMON_SRCS := src/common.c src/config.c src/sha256.c src/install.c src/cpio.c src/tar.c src/rootfs.c src/runtime.c
 COMMON_OBJS := $(COMMON_SRCS:src/%.c=$(OBJ_DIR)/%.o)
 
-.PHONY: all clean test static static-debug
+.PHONY: all clean test static static-debug test-cli
 
 all: $(BIN_DIR)/burning-init $(BIN_DIR)/burning-progress
 
@@ -57,7 +57,32 @@ $(OBJ_DIR)/tests/%.o: tests/%.c include/burning.h
 $(BIN_DIR) $(TEST_DIR):
 	mkdir -p $@
 
-test: $(TEST_DIR)/test_config $(TEST_DIR)/test_install $(TEST_DIR)/test_cpio
+test-cli: $(BIN_DIR)/burning-progress
+	rm -rf $(BUILD_DIR)/test-rootfs-config
+	mkdir -p $(BUILD_DIR)/test-rootfs-config
+	printf '%s\n' invalid handoff relative /sbin/init | \
+		$(BIN_DIR)/burning-progress rootfs configure $(BUILD_DIR)/test-rootfs-config
+	grep -q '^version=1$$' $(BUILD_DIR)/test-rootfs-config/etc/burning-progress.conf
+	grep -q '^entryMode=handoff$$' $(BUILD_DIR)/test-rootfs-config/etc/burning-progress.conf
+	grep -q '^entry=/sbin/init$$' $(BUILD_DIR)/test-rootfs-config/etc/burning-progress.conf
+	printf '\n\n' | \
+		$(BIN_DIR)/burning-progress rootfs configure $(BUILD_DIR)/test-rootfs-config
+	grep -q '^entryMode=handoff$$' $(BUILD_DIR)/test-rootfs-config/etc/burning-progress.conf
+	if : | $(BIN_DIR)/burning-progress rootfs configure \
+		$(BUILD_DIR)/test-rootfs-config; then exit 1; fi
+	mkdir -p $(BUILD_DIR)/test-rootfs-config-link \
+		$(BUILD_DIR)/test-rootfs-config-outside
+	ln -s ../test-rootfs-config-outside $(BUILD_DIR)/test-rootfs-config-link/etc
+	if printf '\n\n' | $(BIN_DIR)/burning-progress rootfs configure \
+		$(BUILD_DIR)/test-rootfs-config-link; then exit 1; fi
+	test ! -e $(BUILD_DIR)/test-rootfs-config-outside/burning-progress.conf
+	if printf '\n\n' | $(BIN_DIR)/burning-progress rootfs configure \
+		$(BUILD_DIR)/test-rootfs-config-link/; then exit 1; fi
+	mkdir -p $(BUILD_DIR)/test-rootfs-invalid-config/etc/burning-progress.conf
+	if printf '\n\n' | $(BIN_DIR)/burning-progress rootfs configure \
+		$(BUILD_DIR)/test-rootfs-invalid-config; then exit 1; fi
+
+test: $(TEST_DIR)/test_config $(TEST_DIR)/test_install $(TEST_DIR)/test_cpio test-cli
 	$(TEST_DIR)/test_config
 	$(TEST_DIR)/test_install
 	$(TEST_DIR)/test_cpio

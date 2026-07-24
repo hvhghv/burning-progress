@@ -373,6 +373,16 @@ jobs:
             "$QEMU_RUNNER" -L "$BUSYBOX_ROOTFS" "$test_binary"
           done
 
+          config_root="$RUNNER_TEMP/interactive-config-root"
+          rm -rf "$config_root"
+          mkdir -p "$config_root"
+          printf '%s\n' handoff /sbin/init | \
+            "$QEMU_RUNNER" -L "$BUSYBOX_ROOTFS" \
+              build/bin/burning-progress rootfs configure "$config_root"
+          grep -q '^version=1$' "$config_root/etc/burning-progress.conf"
+          grep -q '^entryMode=handoff$' "$config_root/etc/burning-progress.conf"
+          grep -q '^entry=/sbin/init$' "$config_root/etc/burning-progress.conf"
+
       - name: Test CPIO and tar.gz recovery rootfs archives
         run: |
           set -euo pipefail

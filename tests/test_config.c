@@ -27,15 +27,24 @@ static void test_runtime_config(void)
 {
     struct bp_runtime_config config;
     char error[BP_ERROR_CAPACITY];
+    char output[BP_PATH_CAPACITY + 64U];
 
     assert(bp_runtime_config_parse("entryMode=handoff\nentry=/sbin/init\n",
                                    &config, error, sizeof(error)) == 0);
     assert(config.entry_mode == BP_ENTRY_HANDOFF);
     assert(strcmp(config.entry, "/sbin/init") == 0);
+    assert(bp_runtime_config_format(&config, output, sizeof(output),
+                                    error, sizeof(error)) == 0);
+    assert(strcmp(output,
+                  "version=1\nentryMode=handoff\nentry=/sbin/init\n") == 0);
     assert(bp_runtime_config_parse("entry=/../init\n",
                                    &config, error, sizeof(error)) != 0);
     assert(bp_runtime_config_parse("entry=relative.sh\n",
                                    &config, error, sizeof(error)) != 0);
+    bp_runtime_config_default(&config);
+    config.entry_mode = (enum bp_entry_mode)99;
+    assert(bp_runtime_config_format(&config, output, sizeof(output),
+                                    error, sizeof(error)) != 0);
 }
 
 int main(void)

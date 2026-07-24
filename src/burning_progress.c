@@ -1,5 +1,6 @@
 #include "burning.h"
 
+#include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,6 +22,7 @@ static void usage(FILE *stream)
     fprintf(stream,
             "  rootfs pack DIRECTORY --output FILE [--format cpio|tar.gz]\n"
             "  rootfs unpack FILE --output DIRECTORY\n"
+            "  rootfs configure DIRECTORY\n"
             "  rootfs verify FILE\n"
             "  rootfs install FILE\n");
 }
@@ -245,6 +247,149 @@ static void print_rootfs_info(const struct bp_rootfs_info *info)
     printf("entry=%s\n", info->runtime.entry);
 }
 
+static char *trim_answer(char *text)
+{
+    char *end;
+
+    while (isspace((unsigned char)*text)) {
+        ++text;
+    }
+    end = text + strlen(text);
+    while (end > text && isspace((unsigned char)end[-1])) {
+        --end;
+    }
+    *end = '\0';
+    return text;
+}
+
+static int read_answer(const char *prompt, char *buffer, size_t buffer_size,
+                       char **answer, char *error, size_t error_size)
+{
+    size_t length;
+
+    if (fputs(prompt, stdout) == EOF || fflush(stdout) != 0) {
+        bp_error_set(error, error_size, "write interactive prompt: %s",
+                     strerror(errno));
+        return -1;
+    }
+    if (fgets(buffer, (int)buffer_size, stdin) == NULL) {
+        bp_error_set(error, error_size,
+                     "interactive input ended before configuration was complete");
+        return -1;
+    }
+    length = strlen(buffer);
+    if (length > 0U && buffer[length - 1U] == '\n') {
+        buffer[length - 1U] = '\0';
+    } else if (!feof(stdin)) {
+        int character;
+        do {
+            character = fgetc(stdin);
+        } while (character != '\n' && character != EOF);
+        return 1;
+    }
+    *answer = trim_answer(buffer);
+    return 0;
+}
+
+static int prompt_entry_mode(struct bp_runtime_config *config,
+                             char *error, size_t error_size)
+{
+    char prompt[128];
+    char buffer[64];
+
+    if (snprintf(prompt, sizeof(prompt),
+                 "Entry mode (supervised/handoff) [%s]: ",
+                 bp_entry_mode_name(config->entry_mode)) < 0) {
+        bp_error_set(error, error_size, "cannot format entry mode prompt");
+        return -1;
+    }
+    for (;;) {
+        char *answer;
+        int result = read_answer(prompt, buffer, sizeof(buffer), &answer,
+                                 error, error_size);
+        if (result < 0) {
+            return -1;
+        }
+        if (result > 0) {
+            puts("Input is too long; enter supervised or handoff.");
+            continue;
+        }
+        if (answer[0] == '\0') {
+            return 0;
+        }
+        if (strcmp(answer, "supervised") == 0) {
+            config->entry_mode = BP_ENTRY_SUPERVISED;
+            return 0;
+        }
+        if (strcmp(answer, "handoff") == 0) {
+            config->entry_mode = BP_ENTRY_HANDOFF;
+            return 0;
+        }
+        puts("Invalid entry mode; enter supervised or handoff.");
+    }
+}
+
+static int prompt_entry_path(struct bp_runtime_config *config,
+                             char *error, size_t error_size)
+{
+    char prompt[BP_PATH_CAPACITY + 32U];
+    char buffer[BP_PATH_CAPACITY + 2U];
+
+    if (snprintf(prompt, sizeof(prompt), "Entry path [%s]: ", config->entry) < 0) {
+        bp_error_set(error, error_size, "cannot format entry path prompt");
+        return -1;
+    }
+    for (;;) {
+        struct bp_runtime_config candidate = *config;
+        char formatted[BP_PATH_CAPACITY + 64U];
+        char validation_error[BP_ERROR_CAPACITY] = {0};
+        char *answer;
+        int result = read_answer(prompt, buffer, sizeof(buffer), &answer,
+                                 error, error_size);
+        if (result < 0) {
+            return -1;
+        }
+        if (result > 0 || strlen(answer) >= sizeof(candidate.entry)) {
+            puts("Invalid entry path; enter an absolute path without . or .. components.");
+            continue;
+        }
+        if (answer[0] != '\0') {
+            strcpy(candidate.entry, answer);
+        }
+        if (bp_runtime_config_format(&candidate, formatted, sizeof(formatted),
+                                     validation_error,
+                                     sizeof(validation_error)) != 0) {
+            printf("%s\n", validation_error);
+            continue;
+        }
+        *config = candidate;
+        return 0;
+    }
+}
+
+static int command_rootfs_configure(const char *directory)
+{
+    struct bp_runtime_config config;
+    char error[BP_ERROR_CAPACITY] = {0};
+    char config_path[BP_PATH_CAPACITY];
+
+    if (bp_rootfs_runtime_config_load(directory, &config,
+                                      error, sizeof(error)) != 0 ||
+        prompt_entry_mode(&config, error, sizeof(error)) != 0 ||
+        prompt_entry_path(&config, error, sizeof(error)) != 0 ||
+        bp_rootfs_runtime_config_save(directory, &config,
+                                      error, sizeof(error)) != 0 ||
+        bp_path(config_path, sizeof(config_path), directory,
+                BP_RUNTIME_CONFIG_PATH, error, sizeof(error)) != 0) {
+        fprintf(stderr, "burning-progress: %s\n", error);
+        return -1;
+    }
+    printf("configuration=%s\n", config_path);
+    printf("entryMode=%s\n", bp_entry_mode_name(config.entry_mode));
+    printf("entry=%s\n", config.entry);
+    return 0;
+}
+
 static int command_rootfs(const char *root, int argc, char **argv)
 {
     struct bp_rootfs_info info;
@@ -267,6 +412,8 @@ static int command_rootfs(const char *root, int argc, char **argv)
     } else if (argc == 4 && strcmp(argv[0], "unpack") == 0 &&
                strcmp(argv[2], "--output") == 0) {
         result = bp_rootfs_unpack(argv[1], argv[3], &info, error, sizeof(error));
+    } else if (argc == 2 && strcmp(argv[0], "configure") == 0) {
+        return command_rootfs_configure(argv[1]);
     } else if (argc == 2 && strcmp(argv[0], "verify") == 0) {
         result = bp_rootfs_verify(argv[1], &info, error, sizeof(error));
     } else if (argc == 2 && strcmp(argv[0], "install") == 0) {

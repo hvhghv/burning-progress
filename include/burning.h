@@ -91,6 +91,8 @@ int bp_boot_choice_parse(const char *text, enum bp_boot_choice *choice);
 void bp_runtime_config_default(struct bp_runtime_config *config);
 int bp_runtime_config_parse(const char *text, struct bp_runtime_config *config,
                             char *error, size_t error_size);
+int bp_runtime_config_format(const struct bp_runtime_config *config, char *output,
+                             size_t output_size, char *error, size_t error_size);
 const char *bp_entry_mode_name(enum bp_entry_mode mode);
 
 int bp_sha256_file(const char *path, char output[65], char *error, size_t error_size);
@@ -123,6 +125,12 @@ int bp_rootfs_extract(const char *archive, const char *destination,
                       struct bp_rootfs_info *info, char *error, size_t error_size);
 int bp_rootfs_unpack(const char *archive, const char *destination,
                      struct bp_rootfs_info *info, char *error, size_t error_size);
+int bp_rootfs_runtime_config_load(const char *rootfs,
+                                  struct bp_runtime_config *config,
+                                  char *error, size_t error_size);
+int bp_rootfs_runtime_config_save(const char *rootfs,
+                                  const struct bp_runtime_config *config,
+                                  char *error, size_t error_size);
 int bp_rootfs_install(const char *root, const char *archive,
                       struct bp_rootfs_info *info, char *error, size_t error_size);
 int bp_rootfs_verify_installed(const char *root, struct bp_rootfs_info *info,

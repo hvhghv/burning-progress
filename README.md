@@ -217,6 +217,7 @@ entry=/entry.sh
 CPIO 打包、解包、校验和安装：
 
 ```sh
+build/bin/burning-progress rootfs configure ./rootfs
 build/bin/burning-progress rootfs pack ./rootfs --output ./rootfs.cpio
 build/bin/burning-progress rootfs verify ./rootfs.cpio
 build/bin/burning-progress rootfs unpack ./rootfs.cpio --output ./unpacked-rootfs
@@ -230,12 +231,15 @@ build/bin/burning-progress rootfs pack ./rootfs --output ./rootfs.tar.gz
 build/bin/burning-progress rootfs pack ./rootfs --output ./recovery.img --format tar.gz
 build/bin/burning-progress rootfs verify ./rootfs.tar.gz
 build/bin/burning-progress rootfs unpack ./rootfs.tar.gz --output ./unpacked-rootfs
+build/bin/burning-progress rootfs configure ./unpacked-rootfs
 sudo build/bin/burning-progress rootfs install ./rootfs.tar.gz
 ```
 
 `verify`、`unpack`、`install` 和 PID 1 启动流程按文件 magic 检测格式，不依赖文件扩展名。为保持旧版本布局兼容及单文件原子替换，安装后的归档仍统一命名为 `/etc/BurningProcess/rootfs.cpio`，其中内容可以是 CPIO 或 tar.gz。
 
 tar.gz 的 `rootfs unpack` 可用于准备尚未加入 `burning-progress` 的基础 rootfs；它执行完整的路径和类型安全检查，但不要求 recovery 入口文件已经存在。如果归档中所有内容都位于唯一的显式顶层目录内，该目录会自动剥离。`rootfs verify`、`rootfs install` 和启动流程仍要求 `/bin/sh`、`/sbin/burning-progress` 及 handoff 入口完整有效。
+
+解包后可执行 `rootfs configure DIRECTORY` 交互生成 `DIRECTORY/etc/burning-progress.conf`。命令依次询问 `entryMode` 和 `entry`；方括号内显示现有值或默认值，直接回车保留该值。非法输入会重新询问，输入在完成前结束时不会写入配置。配置文件使用 `0644` 权限原子替换；为防止写出目标 rootfs，rootfs 本身及其 `etc` 必须是真实目录而不是符号链接。
 
 解包目标目录不存在时会自动创建；如果目录已经存在，则必须为空。归档校验或解包失败时命令返回非零状态。解包不是事务操作，失败后应删除目标目录，不要使用其中可能残留的文件。
 
