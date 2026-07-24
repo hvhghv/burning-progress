@@ -1,0 +1,331 @@
+name: Build and test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/build-test.yml
+      - Makefile
+      - include/**
+      - src/**
+      - tests/**
+  pull_request:
+    paths:
+      - .github/workflows/build-test.yml
+      - Makefile
+      - include/**
+      - src/**
+      - tests/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-test:
+    name: Native C99 build and tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential file
+
+      - name: Build and run native tests
+        run: |
+          set -euo pipefail
+          make clean
+          make all
+          make test
+          file build/bin/burning-init build/bin/burning-progress
+
+  musl-build-test:
+    name: ${{ matrix.toolchain }} (${{ matrix.linkage }})
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - toolchain: x86_64-linux-musl
+            toolchain_asset: musl-toolchain-x86_64.tar.gz
+            rootfs_asset: busybox-rootfs-1.38.0-x86_64-linux-musl-dynamic.tar.gz
+            qemu: qemu-x86_64-static
+            linkage: dynamic
+          - toolchain: x86_64-linux-musl
+            toolchain_asset: musl-toolchain-x86_64.tar.gz
+            rootfs_asset: busybox-rootfs-1.38.0-x86_64-linux-musl-dynamic.tar.gz
+            qemu: qemu-x86_64-static
+            linkage: static
+          - toolchain: arm-linux-musleabi
+            toolchain_asset: musl-toolchain-arm.tar.gz
+            rootfs_asset: busybox-rootfs-1.38.0-arm-linux-musleabi-dynamic.tar.gz
+            qemu: qemu-arm-static
+            linkage: dynamic
+          - toolchain: arm-linux-musleabi
+            toolchain_asset: musl-toolchain-arm.tar.gz
+            rootfs_asset: busybox-rootfs-1.38.0-arm-linux-musleabi-dynamic.tar.gz
+            qemu: qemu-arm-static
+            linkage: static
+          - toolchain: aarch64-linux-musl
+            toolchain_asset: musl-toolchain-aarch64.tar.gz
+            rootfs_asset: busybox-rootfs-1.38.0-aarch64-linux-musl-dynamic.tar.gz
+            qemu: qemu-aarch64-static
+            linkage: dynamic
+          - toolchain: aarch64-linux-musl
+            toolchain_asset: musl-toolchain-aarch64.tar.gz
+            rootfs_asset: busybox-rootfs-1.38.0-aarch64-linux-musl-dynamic.tar.gz
+            qemu: qemu-aarch64-static
+            linkage: static
+          - toolchain: riscv64-linux-musl
+            toolchain_asset: musl-toolchain-riscv64.tar.gz
+            rootfs_asset: busybox-rootfs-1.38.0-riscv64-linux-musl-dynamic.tar.gz
+            qemu: qemu-riscv64-static
+            linkage: dynamic
+          - toolchain: riscv64-linux-musl
+            toolchain_asset: musl-toolchain-riscv64.tar.gz
+            rootfs_asset: busybox-rootfs-1.38.0-riscv64-linux-musl-dynamic.tar.gz
+            qemu: qemu-riscv64-static
+            linkage: static
+
+    env:
+      MUSL_RELEASE_BASE: https://github.com/hvhghv/musl-gcc/releases/download/musl-gcc
+      BUSYBOX_RELEASE_BASE: https://github.com/hvhghv/cross-software/releases/download/v1.38.0-busybox
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install build and test dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl file qemu-user-static
+
+      - name: Cache toolchain and BusyBox rootfs downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/burning-progress-downloads
+          key: burning-progress-deps-v1-${{ matrix.toolchain }}
+
+      - name: Download dependencies
+        env:
+          TOOLCHAIN_ASSET: ${{ matrix.toolchain_asset }}
+          ROOTFS_ASSET: ${{ matrix.rootfs_asset }}
+        run: |
+          set -euo pipefail
+          downloads="$RUNNER_TEMP/burning-progress-downloads"
+          mkdir -p "$downloads"
+
+          if [ ! -s "$downloads/$TOOLCHAIN_ASSET" ]; then
+            curl -L --fail --retry 5 --retry-all-errors --connect-timeout 30 \
+              -o "$downloads/$TOOLCHAIN_ASSET" \
+              "$MUSL_RELEASE_BASE/$TOOLCHAIN_ASSET"
+          fi
+          if [ ! -s "$downloads/$ROOTFS_ASSET" ]; then
+            curl -L --fail --retry 5 --retry-all-errors --connect-timeout 30 \
+              -o "$downloads/$ROOTFS_ASSET" \
+              "$BUSYBOX_RELEASE_BASE/$ROOTFS_ASSET"
+          fi
+          if [ ! -s "$downloads/SHA256SUMS.busybox-1.38.0" ]; then
+            curl -L --fail --retry 5 --retry-all-errors --connect-timeout 30 \
+              -o "$downloads/SHA256SUMS.busybox-1.38.0" \
+              "$BUSYBOX_RELEASE_BASE/SHA256SUMS"
+          fi
+
+          expected=$(awk -v name="$ROOTFS_ASSET" '$2 == name { print $1; exit }' \
+            "$downloads/SHA256SUMS.busybox-1.38.0")
+          test -n "$expected"
+          actual=$(sha256sum "$downloads/$ROOTFS_ASSET" | awk '{ print $1 }')
+          test "$actual" = "$expected"
+
+      - name: Install musl cross toolchain
+        env:
+          TOOLCHAIN: ${{ matrix.toolchain }}
+          TOOLCHAIN_ASSET: ${{ matrix.toolchain_asset }}
+          QEMU_RUNNER: ${{ matrix.qemu }}
+        run: |
+          set -euo pipefail
+          toolchain_root="$RUNNER_TEMP/musl-cross"
+          rm -rf "$toolchain_root"
+          mkdir -p "$toolchain_root"
+          tar -xzf "$RUNNER_TEMP/burning-progress-downloads/$TOOLCHAIN_ASSET" \
+            -C "$toolchain_root"
+
+          compiler_path=$(find "$toolchain_root" -type f -name "${TOOLCHAIN}-gcc" \
+            -print -quit)
+          test -n "$compiler_path"
+          chmod +x "$compiler_path"
+          compiler_bin=$(dirname "$compiler_path")
+          sysroot=$($compiler_path -print-sysroot)
+          test -d "$sysroot"
+          command -v "$QEMU_RUNNER"
+
+          echo "$compiler_bin" >> "$GITHUB_PATH"
+          echo "MUSL_CC=$compiler_path" >> "$GITHUB_ENV"
+          echo "MUSL_SYSROOT=$sysroot" >> "$GITHUB_ENV"
+          echo "QEMU_RUNNER=$QEMU_RUNNER" >> "$GITHUB_ENV"
+          "$compiler_path" --version
+
+      - name: Build target programs and tests
+        env:
+          LINKAGE: ${{ matrix.linkage }}
+        run: |
+          set -euo pipefail
+          linker_flags=
+          if [ "$LINKAGE" = static ]; then
+            linker_flags=-static
+          fi
+
+          make clean
+          make CC="$MUSL_CC" LDFLAGS="$linker_flags" \
+            all \
+            build/tests/test_config \
+            build/tests/test_install \
+            build/tests/test_cpio
+
+      - name: Verify binary linkage
+        env:
+          LINKAGE: ${{ matrix.linkage }}
+        run: |
+          set -euo pipefail
+          for binary in build/bin/burning-init build/bin/burning-progress; do
+            description=$(file "$binary")
+            echo "$description"
+            if [ "$LINKAGE" = static ]; then
+              grep -qi 'statically linked' <<<"$description"
+            else
+              grep -qi 'dynamically linked' <<<"$description"
+            fi
+          done
+
+      - name: Prepare matching BusyBox rootfs
+        env:
+          ROOTFS_ASSET: ${{ matrix.rootfs_asset }}
+        run: |
+          set -euo pipefail
+          rootfs="$RUNNER_TEMP/busybox-rootfs"
+          rm -rf "$rootfs"
+          mkdir -p "$rootfs"
+          tar -xzf "$RUNNER_TEMP/burning-progress-downloads/$ROOTFS_ASSET" \
+            -C "$rootfs" --strip-components=1
+
+          test -x "$rootfs/bin/busybox"
+          test -e "$rootfs/bin/sh"
+          test -n "$(find "$rootfs/lib" -maxdepth 1 -name 'ld-musl-*.so.1' -print -quit)"
+          for directory in bin sbin etc dev proc sys run usr var tmp root; do
+            test -d "$rootfs/$directory"
+          done
+          for file in etc/passwd etc/group etc/inittab etc/init.d/rcS; do
+            test -f "$rootfs/$file"
+          done
+
+          install -m 0755 build/bin/burning-init "$rootfs/sbin/burning-init"
+          install -m 0755 build/bin/burning-progress "$rootfs/sbin/burning-progress"
+          printf '%s\n' \
+            'version=1' \
+            'entryMode=supervised' \
+            'entry=/entry.sh' > "$rootfs/etc/burning-progress.conf"
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'echo BURNING_PROGRESS_ROOTFS_OK' \
+            'exit 0' > "$rootfs/entry.sh"
+          chmod 0755 "$rootfs/entry.sh"
+          echo "BUSYBOX_ROOTFS=$rootfs" >> "$GITHUB_ENV"
+
+      - name: Run target unit tests through QEMU
+        run: |
+          set -euo pipefail
+          for test_binary in \
+            build/tests/test_config \
+            build/tests/test_install \
+            build/tests/test_cpio; do
+            "$QEMU_RUNNER" -L "$BUSYBOX_ROOTFS" "$test_binary"
+          done
+
+      - name: Pack and verify the BusyBox recovery rootfs
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/rootfs.cpio"
+          "$QEMU_RUNNER" -L "$BUSYBOX_ROOTFS" \
+            build/bin/burning-progress rootfs pack "$BUSYBOX_ROOTFS" \
+            --output "$archive"
+          "$QEMU_RUNNER" -L "$BUSYBOX_ROOTFS" \
+            build/bin/burning-progress rootfs verify "$archive"
+          test -s "$archive"
+          echo "RECOVERY_ARCHIVE=$archive" >> "$GITHUB_ENV"
+
+      - name: Test management commands in an isolated root
+        run: |
+          set -euo pipefail
+          host_root="$RUNNER_TEMP/host-root"
+          mkdir -p "$host_root/sbin" "$host_root/lib/systemd"
+          printf '%s\n' '#!/bin/sh' 'exit 0' > "$host_root/lib/systemd/systemd"
+          chmod 0755 "$host_root/lib/systemd/systemd"
+          ln -s ../lib/systemd/systemd "$host_root/sbin/init"
+
+          sudo "$QEMU_RUNNER" -L "$BUSYBOX_ROOTFS" \
+            build/bin/burning-progress --root "$host_root" install \
+            --init-binary "$GITHUB_WORKSPACE/build/bin/burning-init" \
+            --progress-binary "$GITHUB_WORKSPACE/build/bin/burning-progress"
+          sudo "$QEMU_RUNNER" -L "$BUSYBOX_ROOTFS" \
+            build/bin/burning-progress --root "$host_root" \
+            config --timeout 1 --default normal
+          sudo "$QEMU_RUNNER" -L "$BUSYBOX_ROOTFS" \
+            build/bin/burning-progress --root "$host_root" enable --once
+          sudo "$QEMU_RUNNER" -L "$BUSYBOX_ROOTFS" \
+            build/bin/burning-progress --root "$host_root" \
+            rootfs install "$RECOVERY_ARCHIVE"
+
+          status_output=$("$QEMU_RUNNER" -L "$BUSYBOX_ROOTFS" \
+            build/bin/burning-progress --root "$host_root" status)
+          printf '%s\n' "$status_output"
+          grep -q '^installed=true$' <<<"$status_output"
+          grep -q '^enabled=true$' <<<"$status_output"
+          grep -q '^onlyOnce=true$' <<<"$status_output"
+          grep -q '^rootfsInstalled=true$' <<<"$status_output"
+          grep -q '^timeout=1$' <<<"$status_output"
+          grep -q '^default=normal$' <<<"$status_output"
+
+          sudo "$QEMU_RUNNER" -L "$BUSYBOX_ROOTFS" \
+            build/bin/burning-progress --root "$host_root" uninstall
+          test -L "$host_root/sbin/init"
+          test "$(readlink "$host_root/sbin/init")" = ../lib/systemd/systemd
+
+      - name: Package target programs
+        env:
+          TOOLCHAIN: ${{ matrix.toolchain }}
+          LINKAGE: ${{ matrix.linkage }}
+        run: |
+          set -euo pipefail
+          package_name="burning-progress-${TOOLCHAIN}-${LINKAGE}"
+          package_root="$RUNNER_TEMP/package/$package_name"
+          artifact_root="$RUNNER_TEMP/artifacts"
+          mkdir -p "$package_root" "$artifact_root"
+          install -m 0755 build/bin/burning-init "$package_root/burning-init"
+          install -m 0755 build/bin/burning-progress "$package_root/burning-progress"
+          tar -czf "$artifact_root/$package_name.tar.gz" \
+            -C "$RUNNER_TEMP/package" "$package_name"
+          sha256sum "$artifact_root/$package_name.tar.gz" \
+            > "$artifact_root/$package_name.tar.gz.sha256"
+
+      - name: Upload target package
+        uses: actions/upload-artifact@v4
+        with:
+          name: burning-progress-${{ matrix.toolchain }}-${{ matrix.linkage }}
+          path: |
+            ${{ runner.temp }}/artifacts/*.tar.gz
+            ${{ runner.temp }}/artifacts/*.sha256
+          if-no-files-found: error
+          retention-days: 14
