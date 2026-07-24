@@ -93,9 +93,10 @@ GitHub Actions 会执行以下检查：
 - 每种架构分别生成并检查 dynamic、static 两种链接版本。
 - 使用 QEMU 和对应架构的 BusyBox 1.38.0 rootfs 运行目标测试程序。
 - 将目标程序注入 BusyBox rootfs，实际执行 CPIO 打包、校验和隔离目录安装测试。
+- 使用 `qemu-system-x86_64` 启动真实 Linux 客体内核，验证 PID 1、挂载、`pivot_root` 和旧根目录卸载。
 - 将两个程序打包为带 SHA-256 校验文件的 Actions artifact。
 
-测试 rootfs 来自 [`hvhghv/cross-software` 的 `v1.38.0-busybox` release](https://github.com/hvhghv/cross-software/releases/tag/v1.38.0-busybox)。用户态 QEMU 测试不覆盖真实 PID 1、挂载和 `pivot_root`，这些路径仍需在完整虚拟机或实际设备上验证。
+测试 rootfs 来自 [`hvhghv/cross-software` 的 `v1.38.0-busybox` release](https://github.com/hvhghv/cross-software/releases/tag/v1.38.0-busybox)。用户态 QEMU 矩阵负责跨架构程序测试；额外的 x86_64 QEMU system job 使用真实客体内核验证完整根切换流程。ARM、AArch64、RISC-V 和具体设备驱动仍需对应虚拟机或实际设备验证。
 
 ## 在临时根目录中测试安装
 
@@ -276,7 +277,7 @@ sudo /sbin/burning-progress uninstall
 - `rootfs.cpio.sha256` 只能检测意外损坏，不能验证发布者身份；不可信更新渠道需要额外的数字签名。
 - 刷机镜像必须在卸载旧根目录前复制到内存，或在 recovery 环境中通过网络获取。
 - recovery rootfs 必须自带系统盘卸载后仍需要的程序、共享库、内核模块和固件。
-- 用户态容器或 QEMU user mode 不能完整验证真实 PID 1、mount namespace 和 `pivot_root`；正式部署前应进行整机虚拟机或实际设备测试。
+- CI 已使用 x86_64 完整虚拟机验证真实 PID 1、mount namespace 和 `pivot_root`；其他架构及板级存储、Bootloader 和驱动仍需在对应虚拟机或实际设备上测试。
 
 更完整的设计约束和验收条件见 [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)。
 

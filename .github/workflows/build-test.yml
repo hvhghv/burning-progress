@@ -20,6 +20,7 @@ on:
       - tests/**
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -317,8 +318,10 @@ jobs:
           install -m 0755 build/bin/burning-progress "$package_root/burning-progress"
           tar -czf "$artifact_root/$package_name.tar.gz" \
             -C "$RUNNER_TEMP/package" "$package_name"
-          sha256sum "$artifact_root/$package_name.tar.gz" \
-            > "$artifact_root/$package_name.tar.gz.sha256"
+          (
+            cd "$artifact_root"
+            sha256sum "$package_name.tar.gz" > "$package_name.tar.gz.sha256"
+          )
 
       - name: Upload target package
         uses: actions/upload-artifact@v4
@@ -329,3 +332,187 @@ jobs:
             ${{ runner.temp }}/artifacts/*.sha256
           if-no-files-found: error
           retention-days: 14
+
+  qemu-system-test:
+    name: QEMU system PID 1 and pivot_root test
+    needs:
+      - native-test
+      - musl-build-test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      ROOTFS_ASSET: busybox-rootfs-1.38.0-x86_64-linux-musl-dynamic.tar.gz
+      BUSYBOX_RELEASE_BASE: https://github.com/hvhghv/cross-software/releases/download/v1.38.0-busybox
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install QEMU system and guest kernel
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            e2fsprogs linux-image-virtual qemu-system-x86
+          command -v qemu-system-x86_64
+
+          kernel_source=$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*-generic' \
+            -print | sort -V | tail -n 1)
+          test -n "$kernel_source"
+          initrd_source=${kernel_source/vmlinuz-/initrd.img-}
+          sudo test -r "$initrd_source"
+          guest_kernel="$RUNNER_TEMP/guest-vmlinuz"
+          guest_initrd="$RUNNER_TEMP/guest-initrd.img"
+          sudo install -m 0644 "$kernel_source" "$guest_kernel"
+          sudo install -m 0644 "$initrd_source" "$guest_initrd"
+          echo "GUEST_KERNEL=$guest_kernel" >> "$GITHUB_ENV"
+          echo "GUEST_INITRD=$guest_initrd" >> "$GITHUB_ENV"
+
+      - name: Download x86_64 static target package
+        uses: actions/download-artifact@v4
+        with:
+          name: burning-progress-x86_64-linux-musl-static
+          path: ${{ runner.temp }}/target-package
+
+      - name: Verify and extract target package
+        run: |
+          set -euo pipefail
+          package_dir="$RUNNER_TEMP/target-package"
+          package_name=burning-progress-x86_64-linux-musl-static
+          (
+            cd "$package_dir"
+            sha256sum -c "$package_name.tar.gz.sha256"
+          )
+          target_bin="$RUNNER_TEMP/target-bin"
+          mkdir -p "$target_bin"
+          tar -xzf "$package_dir/$package_name.tar.gz" \
+            -C "$target_bin" --strip-components=1
+          test -x "$target_bin/burning-init"
+          test -x "$target_bin/burning-progress"
+          file "$target_bin/burning-init" "$target_bin/burning-progress" \
+            | tee "$RUNNER_TEMP/qemu-system-targets.txt"
+          grep -q 'statically linked' "$RUNNER_TEMP/qemu-system-targets.txt"
+          echo "TARGET_BIN=$target_bin" >> "$GITHUB_ENV"
+
+      - name: Download and verify BusyBox rootfs
+        run: |
+          set -euo pipefail
+          downloads="$RUNNER_TEMP/qemu-system-downloads"
+          mkdir -p "$downloads"
+          curl -L --fail --retry 5 --retry-all-errors --connect-timeout 30 \
+            -o "$downloads/$ROOTFS_ASSET" \
+            "$BUSYBOX_RELEASE_BASE/$ROOTFS_ASSET"
+          curl -L --fail --retry 5 --retry-all-errors --connect-timeout 30 \
+            -o "$downloads/SHA256SUMS" \
+            "$BUSYBOX_RELEASE_BASE/SHA256SUMS"
+
+          expected=$(awk -v name="$ROOTFS_ASSET" \
+            '$2 == name { print $1; exit }' "$downloads/SHA256SUMS")
+          actual=$(sha256sum "$downloads/$ROOTFS_ASSET" | awk '{ print $1 }')
+          test -n "$expected"
+          test "$actual" = "$expected"
+
+      - name: Build guest system and recovery rootfs
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/qemu-system"
+          base_root="$work/rootfs-base"
+          boot_root="$work/boot-root"
+          recovery_root="$work/recovery-root"
+          mkdir -p "$base_root" "$boot_root" "$recovery_root"
+          tar -xzf "$RUNNER_TEMP/qemu-system-downloads/$ROOTFS_ASSET" \
+            -C "$base_root" --strip-components=1
+          cp -a "$base_root/." "$boot_root/"
+          cp -a "$base_root/." "$recovery_root/"
+
+          install -m 0755 "$TARGET_BIN/burning-progress" \
+            "$recovery_root/sbin/burning-progress"
+          printf '%s\n' \
+            'version=1' \
+            'entryMode=supervised' \
+            'entry=/entry.sh' > "$recovery_root/etc/burning-progress.conf"
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'fail() {' \
+            '  echo "BURNING_PROGRESS_QEMU_SYSTEM_FAIL: $*" >/dev/console' \
+            '  poweroff -f' \
+            '  exit 1' \
+            '}' \
+            'pid1=$(readlink /proc/1/exe) || fail "cannot read PID 1"' \
+            '[ "$pid1" = /sbin/burning-progress ] || fail "unexpected PID 1: $pid1"' \
+            '! grep -Eq " /oldroot(/[^ ]*)? " /proc/self/mountinfo || fail "old root is mounted"' \
+            'grep -q " /proc " /proc/self/mountinfo || fail "/proc is not mounted"' \
+            'grep -q " /sys " /proc/self/mountinfo || fail "/sys is not mounted"' \
+            'grep -q " /dev " /proc/self/mountinfo || fail "/dev is not mounted"' \
+            'grep -q " /run " /proc/self/mountinfo || fail "/run is not mounted"' \
+            'echo "BURNING_PROGRESS_QEMU_SYSTEM_OK pid1=$pid1" >/dev/console' \
+            'sync' \
+            'poweroff -f' \
+            'exit 1' > "$recovery_root/entry.sh"
+          chmod 0755 "$recovery_root/entry.sh"
+
+          recovery_archive="$work/rootfs.cpio"
+          "$TARGET_BIN/burning-progress" rootfs pack "$recovery_root" \
+            --output "$recovery_archive"
+          "$TARGET_BIN/burning-progress" rootfs verify "$recovery_archive"
+
+          sudo "$TARGET_BIN/burning-progress" --root "$boot_root" install \
+            --init-binary "$TARGET_BIN/burning-init" \
+            --progress-binary "$TARGET_BIN/burning-progress"
+          sudo "$TARGET_BIN/burning-progress" --root "$boot_root" \
+            config --timeout 0 --default shell
+          sudo "$TARGET_BIN/burning-progress" --root "$boot_root" \
+            rootfs install "$recovery_archive"
+          sudo "$TARGET_BIN/burning-progress" --root "$boot_root" \
+            enable --persistent
+
+          sudo rm -f "$boot_root/dev/console" "$boot_root/dev/null" \
+            "$boot_root/dev/tty" "$boot_root/dev/zero"
+          sudo mknod -m 0600 "$boot_root/dev/console" c 5 1
+          sudo mknod -m 0666 "$boot_root/dev/null" c 1 3
+          sudo mknod -m 0666 "$boot_root/dev/tty" c 5 0
+          sudo mknod -m 0666 "$boot_root/dev/zero" c 1 5
+
+          system_image="$work/system.ext4"
+          truncate -s 512M "$system_image"
+          sudo mkfs.ext4 -q -F -L burning-system -d "$boot_root" "$system_image"
+          echo "QEMU_SYSTEM_WORK=$work" >> "$GITHUB_ENV"
+          echo "QEMU_SYSTEM_IMAGE=$system_image" >> "$GITHUB_ENV"
+
+      - name: Boot burning-progress as guest PID 1
+        run: |
+          set -euo pipefail
+          serial_log="$QEMU_SYSTEM_WORK/serial.log"
+          set +e
+          timeout --signal=TERM 180s qemu-system-x86_64 \
+            -machine pc,accel=tcg \
+            -cpu max \
+            -smp 2 \
+            -m 1024M \
+            -kernel "$GUEST_KERNEL" \
+            -initrd "$GUEST_INITRD" \
+            -append 'root=/dev/vda rootfstype=ext4 rw console=ttyS0 init=/sbin/init panic=-1' \
+            -drive "file=$QEMU_SYSTEM_IMAGE,format=raw,if=virtio,cache=unsafe" \
+            -display none \
+            -serial stdio \
+            -monitor none \
+            -net none \
+            -no-reboot 2>&1 | tee "$serial_log"
+          qemu_status=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$qemu_status" -ne 0 ]; then
+            echo "qemu-system-x86_64 exited with status $qemu_status" >&2
+          fi
+          ! grep -q 'BURNING_PROGRESS_QEMU_SYSTEM_FAIL:' "$serial_log"
+          grep -q 'BURNING_PROGRESS_QEMU_SYSTEM_OK pid1=/sbin/burning-progress' \
+            "$serial_log"
+
+      - name: Upload QEMU serial log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-system-x86_64-serial-log
+          path: ${{ runner.temp }}/qemu-system/serial.log
+          if-no-files-found: warn
+          retention-days: 7
