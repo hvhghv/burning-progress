@@ -14,6 +14,7 @@ on:
       - include/**
       - src/**
       - tests/**
+      - third_party/**
   pull_request:
     paths:
       - .github/workflows/build-test.yml
@@ -24,6 +25,7 @@ on:
       - include/**
       - src/**
       - tests/**
+      - third_party/**
 
 permissions:
   actions: read
@@ -87,11 +89,7 @@ jobs:
       MUSL_RELEASE_BASE: https://github.com/hvhghv/musl-gcc/releases/download/musl-gcc
       BUSYBOX_RELEASE_BASE: https://github.com/hvhghv/cross-software/releases/download/v1.38.0-busybox
       ZLIB_ARCHIVE: zlib-1.3.2.tar.gz
-      ZLIB_URL: https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz
-      ZLIB_SHA256: bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16
       LIBARCHIVE_ARCHIVE: libarchive-3.8.8.tar.gz
-      LIBARCHIVE_URL: https://github.com/libarchive/libarchive/releases/download/v3.8.8/libarchive-3.8.8.tar.gz
-      LIBARCHIVE_SHA256: 038918ea315cdd446cc63acfe880d6011832bbe1711c887de5de5441b306c190
 
     steps:
       - name: Check out source
@@ -109,9 +107,9 @@ jobs:
           path: |
             ${{ runner.temp }}/burning-progress-downloads
             ${{ runner.temp }}/static-deps/${{ matrix.toolchain }}
-          key: burning-progress-deps-v2-${{ matrix.toolchain }}-zlib-1.3.2-libarchive-3.8.8
+          key: burning-progress-deps-v3-${{ matrix.toolchain }}-${{ hashFiles('third_party/*.tar.gz') }}
 
-      - name: Download dependencies
+      - name: Download toolchain and BusyBox rootfs
         env:
           TOOLCHAIN_ASSET: ${{ matrix.toolchain_asset }}
           ROOTFS_ASSET: ${{ matrix.rootfs_asset }}
@@ -135,22 +133,17 @@ jobs:
               -o "$downloads/SHA256SUMS.busybox-1.38.0" \
               "$BUSYBOX_RELEASE_BASE/SHA256SUMS"
           fi
-          if [ ! -s "$downloads/$ZLIB_ARCHIVE" ]; then
-            curl -L --fail --retry 5 --retry-all-errors --connect-timeout 30 \
-              -o "$downloads/$ZLIB_ARCHIVE" "$ZLIB_URL"
-          fi
-          if [ ! -s "$downloads/$LIBARCHIVE_ARCHIVE" ]; then
-            curl -L --fail --retry 5 --retry-all-errors --connect-timeout 30 \
-              -o "$downloads/$LIBARCHIVE_ARCHIVE" "$LIBARCHIVE_URL"
-          fi
-
           expected=$(awk -v name="$ROOTFS_ASSET" '$2 == name { print $1; exit }' \
             "$downloads/SHA256SUMS.busybox-1.38.0")
           test -n "$expected"
           actual=$(sha256sum "$downloads/$ROOTFS_ASSET" | awk '{ print $1 }')
           test "$actual" = "$expected"
-          echo "$ZLIB_SHA256  $downloads/$ZLIB_ARCHIVE" | sha256sum -c -
-          echo "$LIBARCHIVE_SHA256  $downloads/$LIBARCHIVE_ARCHIVE" | sha256sum -c -
+
+      - name: Verify vendored dependency archives
+        run: |
+          set -euo pipefail
+          cd third_party
+          sha256sum -c SHA256SUMS
 
       - name: Install musl cross toolchain
         env:
@@ -192,7 +185,7 @@ jobs:
           TOOLCHAIN: ${{ matrix.toolchain }}
         run: |
           set -euo pipefail
-          downloads="$RUNNER_TEMP/burning-progress-downloads"
+          sources="$GITHUB_WORKSPACE/third_party"
           prefix="$RUNNER_TEMP/static-deps/$TOOLCHAIN"
           build_root="$RUNNER_TEMP/static-deps-build/$TOOLCHAIN"
 
@@ -205,7 +198,7 @@ jobs:
             rm -rf "$prefix" "$build_root"
             mkdir -p "$prefix" "$build_root/zlib" "$build_root/libarchive"
 
-            tar -xzf "$downloads/$ZLIB_ARCHIVE" \
+            tar -xzf "$sources/$ZLIB_ARCHIVE" \
               -C "$build_root/zlib" --strip-components=1
             (
               cd "$build_root/zlib"
@@ -216,7 +209,7 @@ jobs:
               make install
             )
 
-            tar -xzf "$downloads/$LIBARCHIVE_ARCHIVE" \
+            tar -xzf "$sources/$LIBARCHIVE_ARCHIVE" \
               -C "$build_root/libarchive" --strip-components=1
             mkdir "$build_root/libarchive-build"
             (

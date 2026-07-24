@@ -44,6 +44,10 @@ Burning Progress 是一个纯 C99 编写的 Linux 预启动恢复环境启动器
 |   |-- runtime.c
 |   |-- sha256.c
 |   `-- tar.c
+|-- third_party/
+|   |-- SHA256SUMS
+|   |-- libarchive-3.8.8.tar.gz
+|   `-- zlib-1.3.2.tar.gz
 `-- tests/
     |-- test_config.c
     |-- test_cpio.c
@@ -64,6 +68,13 @@ Ubuntu/Debian 可安装：
 
 ```sh
 sudo apt-get install build-essential libarchive-dev zlib1g-dev
+```
+
+静态发布构建使用的 zlib 1.3.2 与 libarchive 3.8.8 上游源码包已固定在 `third_party/`。构建或更新依赖前可验证：
+
+```sh
+cd third_party
+sha256sum -c SHA256SUMS
 ```
 
 本机开发构建：
