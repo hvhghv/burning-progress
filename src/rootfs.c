@@ -85,3 +85,16 @@ int bp_rootfs_extract(const char *archive, const char *destination,
     }
     return bp_cpio_extract(archive, destination, info, error, error_size);
 }
+
+int bp_rootfs_unpack(const char *archive, const char *destination,
+                     struct bp_rootfs_info *info, char *error, size_t error_size)
+{
+    enum bp_rootfs_format format;
+    if (detect_format(archive, &format, error, error_size) != 0) {
+        return -1;
+    }
+    if (format == BP_ROOTFS_TAR_GZIP) {
+        return bp_tar_gzip_unpack(archive, destination, info, error, error_size);
+    }
+    return bp_cpio_extract(archive, destination, info, error, error_size);
+}

@@ -17,7 +17,9 @@
 
 struct tar_item {
     char *path;
+    char *hardlink;
     mode_t mode;
+    size_t order;
 };
 
 struct tar_list {
@@ -31,12 +33,14 @@ static void tar_list_free(struct tar_list *list)
     size_t index;
     for (index = 0U; index < list->count; ++index) {
         free(list->items[index].path);
+        free(list->items[index].hardlink);
     }
     free(list->items);
     memset(list, 0, sizeof(*list));
 }
 
-static int tar_list_add(struct tar_list *list, const char *path, mode_t mode,
+static int tar_list_add(struct tar_list *list, const char *path,
+                        const char *hardlink, mode_t mode, size_t order,
                         char *error, size_t error_size)
 {
     struct tar_item *resized;
@@ -62,6 +66,17 @@ static int tar_list_add(struct tar_list *list, const char *path, mode_t mode,
         return -1;
     }
     list->items[list->count].mode = mode;
+    list->items[list->count].hardlink = NULL;
+    if (hardlink != NULL) {
+        list->items[list->count].hardlink = strdup(hardlink);
+        if (list->items[list->count].hardlink == NULL) {
+            free(list->items[list->count].path);
+            bp_error_set(error, error_size,
+                         "out of memory copying tar hardlink target");
+            return -1;
+        }
+    }
+    list->items[list->count].order = order;
     ++list->count;
     return 0;
 }
@@ -78,7 +93,9 @@ static const struct tar_item *tar_list_find(const struct tar_list *list,
 {
     struct tar_item key;
     key.path = (char *)path;
+    key.hardlink = NULL;
     key.mode = 0;
+    key.order = 0U;
     return bsearch(&key, list->items, list->count, sizeof(list->items[0]),
                    compare_tar_items);
 }
@@ -144,6 +161,121 @@ static int allowed_tar_type(mode_t mode)
     return S_ISREG(mode) || S_ISDIR(mode) || S_ISLNK(mode);
 }
 
+static int path_is_within_prefix(const char *path, const char *prefix)
+{
+    size_t length = strlen(prefix);
+    return strcmp(path, prefix) == 0 ||
+           (strncmp(path, prefix, length) == 0 && path[length] == '/');
+}
+
+static int strip_tar_prefix(const char *path, const char *prefix,
+                            char output[BP_PATH_CAPACITY], int *is_root,
+                            char *error, size_t error_size)
+{
+    size_t prefix_length = strlen(prefix);
+    const char *stripped = path;
+
+    if (prefix_length != 0U) {
+        if (!path_is_within_prefix(path, prefix)) {
+            bp_error_set(error, error_size,
+                         "tar path is outside the archive root: %s", path);
+            return -1;
+        }
+        if (path[prefix_length] == '\0') {
+            output[0] = '\0';
+            *is_root = 1;
+            return 0;
+        }
+        stripped = path + prefix_length + 1U;
+    }
+    if (strlen(stripped) >= BP_PATH_CAPACITY) {
+        bp_error_set(error, error_size, "tar path is too long: %s", path);
+        return -1;
+    }
+    strcpy(output, stripped);
+    *is_root = 0;
+    return 0;
+}
+
+static int apply_single_root_prefix(struct tar_list *paths,
+                                    char prefix[BP_PATH_CAPACITY],
+                                    char *error, size_t error_size)
+{
+    size_t candidate;
+    size_t selected = SIZE_MAX;
+    size_t index;
+
+    prefix[0] = '\0';
+    for (candidate = 0U; candidate < paths->count; ++candidate) {
+        int contains_all = 1;
+        if (!S_ISDIR(paths->items[candidate].mode) ||
+            strchr(paths->items[candidate].path, '/') != NULL) {
+            continue;
+        }
+        for (index = 0U; index < paths->count; ++index) {
+            if (!path_is_within_prefix(paths->items[index].path,
+                                       paths->items[candidate].path)) {
+                contains_all = 0;
+                break;
+            }
+        }
+        if (contains_all) {
+            selected = candidate;
+            break;
+        }
+    }
+    if (selected == SIZE_MAX) {
+        return 0;
+    }
+    if (strlen(paths->items[selected].path) >= BP_PATH_CAPACITY) {
+        bp_error_set(error, error_size, "tar root prefix is too long");
+        return -1;
+    }
+    strcpy(prefix, paths->items[selected].path);
+    for (index = 0U; index < paths->count; ++index) {
+        char stripped[BP_PATH_CAPACITY];
+        int is_root;
+        if (strip_tar_prefix(paths->items[index].path, prefix, stripped,
+                             &is_root, error, error_size) != 0) {
+            return -1;
+        }
+        if (!is_root) {
+            strcpy(paths->items[index].path, stripped);
+        }
+        if (paths->items[index].hardlink != NULL) {
+            if (strip_tar_prefix(paths->items[index].hardlink, prefix, stripped,
+                                 &is_root, error, error_size) != 0 || is_root) {
+                bp_error_set(error, error_size,
+                             "unsafe tar hardlink target: %s",
+                             paths->items[index].hardlink);
+                return -1;
+            }
+            strcpy(paths->items[index].hardlink, stripped);
+        }
+    }
+
+    free(paths->items[selected].path);
+    free(paths->items[selected].hardlink);
+    if (selected + 1U < paths->count) {
+        memmove(&paths->items[selected], &paths->items[selected + 1U],
+                (paths->count - selected - 1U) * sizeof(paths->items[0]));
+    }
+    --paths->count;
+    return 0;
+}
+
+static int runtime_config_candidate(const char *path)
+{
+    static const char config[] = "etc/burning-progress.conf";
+    size_t path_length = strlen(path);
+    size_t config_length = sizeof(config) - 1U;
+
+    return strcmp(path, config) == 0 ||
+           (path_length > config_length &&
+            path[path_length - config_length - 1U] == '/' &&
+            strcmp(path + path_length - config_length, config) == 0);
+}
+
 static int open_tar_reader(const char *path, struct archive **reader,
                            char *error, size_t error_size)
 {
@@ -199,13 +331,39 @@ static int read_runtime_config(struct archive *reader, la_int64_t size,
     return 0;
 }
 
-int bp_tar_gzip_verify(const char *path, struct bp_rootfs_info *info,
-                       char *error, size_t error_size)
+static int verify_tar_hardlinks(const struct tar_list *paths,
+                                char *error, size_t error_size)
+{
+    size_t index;
+    for (index = 0U; index < paths->count; ++index) {
+        const struct tar_item *item = &paths->items[index];
+        const struct tar_item *target;
+        if (item->hardlink == NULL) {
+            continue;
+        }
+        target = tar_list_find(paths, item->hardlink);
+        if (target == NULL || !S_ISREG(target->mode) ||
+            target->hardlink != NULL || target->order >= item->order) {
+            bp_error_set(error, error_size,
+                         "unsafe tar hardlink: %s -> %s",
+                         item->path, item->hardlink);
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static int bp_tar_gzip_verify_internal(const char *path,
+                                       struct bp_rootfs_info *info,
+                                       int require_recovery_rootfs,
+                                       char prefix[BP_PATH_CAPACITY],
+                                       char *error, size_t error_size)
 {
     struct archive *reader = NULL;
     struct archive_entry *entry;
     struct tar_list paths = {0};
     char *runtime_text = NULL;
+    char runtime_path[BP_PATH_CAPACITY] = {0};
     uint64_t data_bytes = 0U;
     int result = -1;
     int status;
@@ -216,12 +374,16 @@ int bp_tar_gzip_verify(const char *path, struct bp_rootfs_info *info,
     }
     while ((status = archive_read_next_header(reader, &entry)) == ARCHIVE_OK) {
         char normalized[BP_PATH_CAPACITY];
+        char normalized_hardlink[BP_PATH_CAPACITY];
         const char *hardlink = archive_entry_hardlink(entry);
+        const char *stored_hardlink = NULL;
         const char *symlink = archive_entry_symlink(entry);
         mode_t mode = archive_entry_mode(entry);
+        mode_t stored_mode = mode;
         la_int64_t size = archive_entry_size(entry);
         uint64_t stored_size = 0U;
         int is_root;
+        int hardlink_is_root;
 
         if (normalize_tar_path(archive_entry_pathname(entry), normalized,
                                &is_root, error, error_size) != 0) {
@@ -234,17 +396,35 @@ int bp_tar_gzip_verify(const char *path, struct bp_rootfs_info *info,
             }
             continue;
         }
-        if (!allowed_tar_type(mode) || hardlink != NULL ||
-            (S_ISREG(mode) && size < 0) ||
+        if (hardlink != NULL) {
+            if (normalize_tar_path(hardlink, normalized_hardlink,
+                                   &hardlink_is_root, error, error_size) != 0 ||
+                hardlink_is_root) {
+                bp_error_set(error, error_size,
+                             "unsafe tar hardlink target: %s", hardlink);
+                goto cleanup;
+            }
+            stored_hardlink = normalized_hardlink;
+            if ((mode & S_IFMT) == 0) {
+                stored_mode |= S_IFREG;
+            }
+        }
+        if (!allowed_tar_type(stored_mode) ||
+            (hardlink != NULL && (!S_ISREG(stored_mode) || size > 0)) ||
+            (hardlink == NULL && S_ISREG(mode) && size < 0) ||
             (S_ISDIR(mode) && size != 0) ||
             (S_ISLNK(mode) && (symlink == NULL || symlink[0] == '\0'))) {
-            bp_error_set(error, error_size, "unsupported tar entry: %s", normalized);
+            bp_error_set(error, error_size,
+                         "unsupported tar entry: %s (mode=%o size=%lld hardlink=%s)",
+                         normalized, (unsigned int)mode, (long long)size,
+                         hardlink == NULL ? "none" : hardlink);
             goto cleanup;
         }
-        if (tar_list_add(&paths, normalized, mode, error, error_size) != 0) {
+        if (tar_list_add(&paths, normalized, stored_hardlink, stored_mode,
+                         paths.count, error, error_size) != 0) {
             goto cleanup;
         }
-        if (S_ISREG(mode)) {
+        if (S_ISREG(mode) && hardlink == NULL) {
             stored_size = (uint64_t)size;
         } else if (S_ISLNK(mode)) {
             stored_size = strlen(symlink);
@@ -254,12 +434,13 @@ int bp_tar_gzip_verify(const char *path, struct bp_rootfs_info *info,
             goto cleanup;
         }
         data_bytes += stored_size;
-        if (strcmp(normalized, "etc/burning-progress.conf") == 0) {
-            if (!S_ISREG(mode) ||
+        if (require_recovery_rootfs && runtime_config_candidate(normalized)) {
+            if (!S_ISREG(mode) || hardlink != NULL ||
                 read_runtime_config(reader, size, &runtime_text,
                                     error, error_size) != 0) {
                 goto cleanup;
             }
+            strcpy(runtime_path, normalized);
         } else if (archive_read_data_skip(reader) != ARCHIVE_OK) {
             set_archive_error(error, error_size, reader, "read tar entry");
             goto cleanup;
@@ -274,6 +455,22 @@ int bp_tar_gzip_verify(const char *path, struct bp_rootfs_info *info,
         bp_error_set(error, error_size, "archive is not gzip-compressed tar");
         goto cleanup;
     }
+    if (apply_single_root_prefix(&paths, prefix, error, error_size) != 0) {
+        goto cleanup;
+    }
+    if (runtime_text != NULL) {
+        char stripped_runtime[BP_PATH_CAPACITY];
+        int runtime_is_root;
+        if (strip_tar_prefix(runtime_path, prefix, stripped_runtime,
+                             &runtime_is_root, error, error_size) != 0) {
+            goto cleanup;
+        }
+        if (runtime_is_root ||
+            strcmp(stripped_runtime, "etc/burning-progress.conf") != 0) {
+            free(runtime_text);
+            runtime_text = NULL;
+        }
+    }
     qsort(paths.items, paths.count, sizeof(paths.items[0]), compare_tar_items);
     for (index = 1U; index < paths.count; ++index) {
         if (strcmp(paths.items[index - 1U].path, paths.items[index].path) == 0) {
@@ -282,7 +479,10 @@ int bp_tar_gzip_verify(const char *path, struct bp_rootfs_info *info,
             goto cleanup;
         }
     }
-    {
+    if (verify_tar_hardlinks(&paths, error, error_size) != 0) {
+        goto cleanup;
+    }
+    if (require_recovery_rootfs) {
         const struct tar_item *shell = tar_list_find(&paths, "bin/sh");
         const struct tar_item *progress = tar_list_find(&paths, "sbin/burning-progress");
         if (shell == NULL || progress == NULL ||
@@ -299,7 +499,7 @@ int bp_tar_gzip_verify(const char *path, struct bp_rootfs_info *info,
                                        error, error_size) != 0) {
         goto cleanup;
     }
-    if (info->runtime.entry_mode == BP_ENTRY_HANDOFF) {
+    if (require_recovery_rootfs && info->runtime.entry_mode == BP_ENTRY_HANDOFF) {
         const struct tar_item *entry_item =
             tar_list_find(&paths, info->runtime.entry + 1);
         if (entry_item == NULL || !S_ISREG(entry_item->mode)) {
@@ -322,6 +522,14 @@ cleanup:
     return result;
 }
 
+int bp_tar_gzip_verify(const char *path, struct bp_rootfs_info *info,
+                       char *error, size_t error_size)
+{
+    char prefix[BP_PATH_CAPACITY];
+    return bp_tar_gzip_verify_internal(path, info, 1, prefix,
+                                       error, error_size);
+}
+
 static int directory_is_empty(const char *path)
 {
     DIR *directory = opendir(path);
@@ -339,19 +547,23 @@ static int directory_is_empty(const char *path)
     return 1;
 }
 
-int bp_tar_gzip_extract(const char *path, const char *destination,
-                        struct bp_rootfs_info *info, char *error, size_t error_size)
+static int bp_tar_gzip_extract_internal(const char *path, const char *destination,
+                                        struct bp_rootfs_info *info,
+                                        int require_recovery_rootfs,
+                                        char *error, size_t error_size)
 {
     struct archive *reader = NULL;
     struct archive *disk = NULL;
     struct archive_entry *entry;
+    char prefix[BP_PATH_CAPACITY];
     int original_directory = -1;
     int destination_directory = -1;
     int changed_directory = 0;
     int status;
     int result = -1;
 
-    if (bp_tar_gzip_verify(path, info, error, error_size) != 0 ||
+    if (bp_tar_gzip_verify_internal(path, info, require_recovery_rootfs,
+                                    prefix, error, error_size) != 0 ||
         bp_mkdir_p(destination, 0755, error, error_size) != 0 ||
         !directory_is_empty(destination)) {
         if (error[0] == '\0') {
@@ -389,9 +601,11 @@ int bp_tar_gzip_extract(const char *path, const char *destination,
     }
     changed_directory = 1;
     while ((status = archive_read_next_header(reader, &entry)) == ARCHIVE_OK) {
+        char archive_path[BP_PATH_CAPACITY];
         char normalized[BP_PATH_CAPACITY];
+        const char *hardlink = archive_entry_hardlink(entry);
         int is_root;
-        if (normalize_tar_path(archive_entry_pathname(entry), normalized,
+        if (normalize_tar_path(archive_entry_pathname(entry), archive_path,
                                &is_root, error, error_size) != 0) {
             goto cleanup;
         }
@@ -401,6 +615,33 @@ int bp_tar_gzip_extract(const char *path, const char *destination,
                 goto cleanup;
             }
             continue;
+        }
+        if (strip_tar_prefix(archive_path, prefix, normalized, &is_root,
+                             error, error_size) != 0) {
+            goto cleanup;
+        }
+        if (is_root) {
+            if (archive_read_data_skip(reader) != ARCHIVE_OK) {
+                set_archive_error(error, error_size, reader,
+                                  "skip tar root prefix");
+                goto cleanup;
+            }
+            continue;
+        }
+        if (hardlink != NULL) {
+            char archive_target[BP_PATH_CAPACITY];
+            char normalized_target[BP_PATH_CAPACITY];
+            int target_is_root;
+            if (normalize_tar_path(hardlink, archive_target, &target_is_root,
+                                   error, error_size) != 0 || target_is_root ||
+                strip_tar_prefix(archive_target, prefix, normalized_target,
+                                 &target_is_root, error, error_size) != 0 ||
+                target_is_root) {
+                bp_error_set(error, error_size,
+                             "unsafe tar hardlink target: %s", hardlink);
+                goto cleanup;
+            }
+            archive_entry_set_hardlink(entry, normalized_target);
         }
         archive_entry_set_pathname(entry, normalized);
         if (archive_read_extract2(reader, entry, disk) != ARCHIVE_OK) {
@@ -437,6 +678,20 @@ cleanup:
         archive_read_free(reader);
     }
     return result;
+}
+
+int bp_tar_gzip_extract(const char *path, const char *destination,
+                        struct bp_rootfs_info *info, char *error, size_t error_size)
+{
+    return bp_tar_gzip_extract_internal(path, destination, info, 1,
+                                        error, error_size);
+}
+
+int bp_tar_gzip_unpack(const char *path, const char *destination,
+                       struct bp_rootfs_info *info, char *error, size_t error_size)
+{
+    return bp_tar_gzip_extract_internal(path, destination, info, 0,
+                                        error, error_size);
 }
 
 static int prepare_output_path(const char *source, const char *output,

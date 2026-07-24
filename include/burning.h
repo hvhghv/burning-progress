@@ -110,6 +110,8 @@ int bp_tar_gzip_verify(const char *archive, struct bp_rootfs_info *info,
                        char *error, size_t error_size);
 int bp_tar_gzip_extract(const char *archive, const char *destination,
                         struct bp_rootfs_info *info, char *error, size_t error_size);
+int bp_tar_gzip_unpack(const char *archive, const char *destination,
+                       struct bp_rootfs_info *info, char *error, size_t error_size);
 const char *bp_rootfs_format_name(enum bp_rootfs_format format);
 int bp_rootfs_format_parse(const char *text, enum bp_rootfs_format *format);
 int bp_rootfs_pack(const char *source, const char *output,
@@ -119,6 +121,8 @@ int bp_rootfs_verify(const char *archive, struct bp_rootfs_info *info,
                      char *error, size_t error_size);
 int bp_rootfs_extract(const char *archive, const char *destination,
                       struct bp_rootfs_info *info, char *error, size_t error_size);
+int bp_rootfs_unpack(const char *archive, const char *destination,
+                     struct bp_rootfs_info *info, char *error, size_t error_size);
 int bp_rootfs_install(const char *root, const char *archive,
                       struct bp_rootfs_info *info, char *error, size_t error_size);
 int bp_rootfs_verify_installed(const char *root, struct bp_rootfs_info *info,

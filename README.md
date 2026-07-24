@@ -235,6 +235,8 @@ sudo build/bin/burning-progress rootfs install ./rootfs.tar.gz
 
 `verify`、`unpack`、`install` 和 PID 1 启动流程按文件 magic 检测格式，不依赖文件扩展名。为保持旧版本布局兼容及单文件原子替换，安装后的归档仍统一命名为 `/etc/BurningProcess/rootfs.cpio`，其中内容可以是 CPIO 或 tar.gz。
 
+tar.gz 的 `rootfs unpack` 可用于准备尚未加入 `burning-progress` 的基础 rootfs；它执行完整的路径和类型安全检查，但不要求 recovery 入口文件已经存在。如果归档中所有内容都位于唯一的显式顶层目录内，该目录会自动剥离。`rootfs verify`、`rootfs install` 和启动流程仍要求 `/bin/sh`、`/sbin/burning-progress` 及 handoff 入口完整有效。
+
 解包目标目录不存在时会自动创建；如果目录已经存在，则必须为空。归档校验或解包失败时命令返回非零状态。解包不是事务操作，失败后应删除目标目录，不要使用其中可能残留的文件。
 
 安装后生成：
@@ -244,7 +246,7 @@ sudo build/bin/burning-progress rootfs install ./rootfs.tar.gz
 /etc/BurningProcess/rootfs.cpio.sha256
 ```
 
-两种打包器都不会跟随符号链接或跨越挂载点。校验器拒绝绝对路径、`.`/`..` 路径分量、重复路径、硬链接、设备节点、FIFO 和 socket。当前仅支持普通文件、目录和符号链接，不保存 ACL、扩展属性、SELinux 标签、file capabilities 或稀疏文件属性，因此 recovery 环境应优先使用静态程序，或在启动时重新建立所需元数据。
+两种打包器都不会跟随符号链接或跨越挂载点。校验器拒绝绝对路径、`.`/`..` 路径分量、重复路径、设备节点、FIFO 和 socket。tar.gz 仅允许指向归档内已出现普通文件的硬链接，拒绝越界、前向和链式硬链接。当前不保存 ACL、扩展属性、SELinux 标签、file capabilities 或稀疏文件属性，因此 recovery 环境应优先使用静态程序，或在启动时重新建立所需元数据。
 
 ## Entry 模式
 

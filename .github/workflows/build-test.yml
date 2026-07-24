@@ -335,12 +335,13 @@ jobs:
           set -euo pipefail
           rootfs="$RUNNER_TEMP/busybox-rootfs"
           rm -rf "$rootfs"
-          mkdir -p "$rootfs"
-          tar -xzf "$RUNNER_TEMP/burning-progress-downloads/$ROOTFS_ASSET" \
-            -C "$rootfs" --strip-components=1
+          "$QEMU_RUNNER" build/bin/burning-progress rootfs unpack \
+            "$RUNNER_TEMP/burning-progress-downloads/$ROOTFS_ASSET" \
+            --output "$rootfs"
 
           test -x "$rootfs/bin/busybox"
           test -e "$rootfs/bin/sh"
+          test "$rootfs/bin/busybox" -ef "$rootfs/usr/sbin/busybox"
           test -n "$(find "$rootfs/lib" -maxdepth 1 -name 'ld-musl-*.so.1' -print -quit)"
           for directory in bin sbin etc dev proc sys run usr var tmp root; do
             test -d "$rootfs/$directory"

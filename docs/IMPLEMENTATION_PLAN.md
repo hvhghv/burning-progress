@@ -181,8 +181,13 @@ when `/sbin/init` still matches the installed dispatcher state.
   explicit `--format cpio|tar.gz` override.
 - CPIO paths are relative, normalized, and deterministically ordered.
 - Symlinks are archived as symlinks and are not followed.
-- Absolute paths, parent traversal, duplicate paths, hardlinks, devices, FIFOs,
-  sockets, and unsupported types are rejected.
+- Absolute paths, parent traversal, duplicate paths, devices, FIFOs, sockets,
+  and unsupported types are rejected. Tar hardlinks are accepted only when
+  they point backward to an in-root regular file; chained and forward links
+  are rejected.
+- Tar unpack may strip one explicit directory containing every archive entry,
+  allowing a packaged base rootfs to be prepared before recovery files are
+  added. Verify, install, and boot retain the full recovery-root requirements.
 - Packing does not cross mount points by default.
 - The output cannot reside inside the packed directory.
 - Unpacking requires a missing or empty destination directory.

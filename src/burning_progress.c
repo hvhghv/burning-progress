@@ -266,7 +266,7 @@ static int command_rootfs(const char *root, int argc, char **argv)
         result = bp_rootfs_pack(argv[1], argv[3], format, &info, error, sizeof(error));
     } else if (argc == 4 && strcmp(argv[0], "unpack") == 0 &&
                strcmp(argv[2], "--output") == 0) {
-        result = bp_rootfs_extract(argv[1], argv[3], &info, error, sizeof(error));
+        result = bp_rootfs_unpack(argv[1], argv[3], &info, error, sizeof(error));
     } else if (argc == 2 && strcmp(argv[0], "verify") == 0) {
         result = bp_rootfs_verify(argv[1], &info, error, sizeof(error));
     } else if (argc == 2 && strcmp(argv[0], "install") == 0) {
