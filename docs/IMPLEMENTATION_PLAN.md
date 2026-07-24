@@ -164,6 +164,7 @@ burning-progress disable
 burning-progress config --timeout <seconds>
 burning-progress config --default <normal|shell|poweroff>
 burning-progress rootfs pack <directory> --output <file>
+burning-progress rootfs unpack <file> --output <directory>
 burning-progress rootfs verify <file>
 burning-progress rootfs install <file>
 ```
@@ -180,6 +181,7 @@ when `/sbin/init` still matches the installed dispatcher state.
 - Sockets are rejected; device nodes and FIFOs require an explicit policy.
 - Packing does not cross mount points by default.
 - The output cannot reside inside the packed directory.
+- Unpacking requires a missing or empty destination directory.
 - Installation verifies the archive before atomically replacing
   `/etc/BurningProcess/rootfs.cpio`.
 - Basic CPIO does not preserve ACLs, SELinux labels, or file capabilities;

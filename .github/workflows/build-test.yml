@@ -219,7 +219,7 @@ jobs:
             "$QEMU_RUNNER" -L "$BUSYBOX_ROOTFS" "$test_binary"
           done
 
-      - name: Pack and verify the BusyBox recovery rootfs
+      - name: Pack, unpack, and verify the BusyBox recovery rootfs
         run: |
           set -euo pipefail
           archive="$RUNNER_TEMP/rootfs.cpio"
@@ -229,6 +229,22 @@ jobs:
           "$QEMU_RUNNER" -L "$BUSYBOX_ROOTFS" \
             build/bin/burning-progress rootfs verify "$archive"
           test -s "$archive"
+
+          unpacked="$RUNNER_TEMP/unpacked-rootfs"
+          "$QEMU_RUNNER" -L "$BUSYBOX_ROOTFS" \
+            build/bin/burning-progress rootfs unpack "$archive" \
+            --output "$unpacked"
+          test -x "$unpacked/bin/sh"
+          test -x "$unpacked/sbin/burning-progress"
+          test -x "$unpacked/entry.sh"
+          grep -q '^entryMode=supervised$' \
+            "$unpacked/etc/burning-progress.conf"
+          if "$QEMU_RUNNER" -L "$BUSYBOX_ROOTFS" \
+            build/bin/burning-progress rootfs unpack "$archive" \
+            --output "$unpacked"; then
+            echo 'unpack unexpectedly accepted a non-empty destination' >&2
+            exit 1
+          fi
           echo "RECOVERY_ARCHIVE=$archive" >> "$GITHUB_ENV"
 
       - name: Test management commands in an isolated root

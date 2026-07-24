@@ -92,7 +92,7 @@ GitHub Actions 会执行以下检查：
 - 使用 `hvhghv/musl-gcc` 工具链构建 x86_64、ARM、AArch64 和 RISC-V 64。
 - 每种架构只生成 static 版本，并检查二进制不存在动态加载器依赖。
 - 使用 QEMU 和对应架构的 BusyBox 1.38.0 rootfs 运行目标测试程序。
-- 将目标程序注入 BusyBox rootfs，实际执行 CPIO 打包、校验和隔离目录安装测试。
+- 将目标程序注入 BusyBox rootfs，实际执行 CPIO 打包、解包、校验和隔离目录安装测试。
 - 使用 `qemu-system-x86_64` 启动真实 Linux 客体内核，验证 PID 1、挂载、`pivot_root` 和旧根目录卸载。
 - 将两个程序打包为带 SHA-256 校验文件的 Actions artifact。
 
@@ -178,13 +178,16 @@ entryMode=supervised
 entry=/entry.sh
 ```
 
-打包、校验和安装：
+打包、解包、校验和安装：
 
 ```sh
 build/bin/burning-progress rootfs pack ./rootfs --output ./rootfs.cpio
 build/bin/burning-progress rootfs verify ./rootfs.cpio
+build/bin/burning-progress rootfs unpack ./rootfs.cpio --output ./unpacked-rootfs
 sudo build/bin/burning-progress rootfs install ./rootfs.cpio
 ```
+
+解包目标目录不存在时会自动创建；如果目录已经存在，则必须为空。归档校验或解包失败时命令返回非零状态。解包不是事务操作，失败后应删除目标目录，不要使用其中可能残留的文件。
 
 安装后生成：
 

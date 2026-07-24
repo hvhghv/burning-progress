@@ -20,6 +20,7 @@ static void usage(FILE *stream)
             "  config [--timeout SECONDS] [--default normal|shell|poweroff]\n");
     fprintf(stream,
             "  rootfs pack DIRECTORY --output FILE\n"
+            "  rootfs unpack FILE --output DIRECTORY\n"
             "  rootfs verify FILE\n"
             "  rootfs install FILE\n");
 }
@@ -252,6 +253,9 @@ static int command_rootfs(const char *root, int argc, char **argv)
     if (argc == 4 && strcmp(argv[0], "pack") == 0 &&
         strcmp(argv[2], "--output") == 0) {
         result = bp_cpio_pack(argv[1], argv[3], &info, error, sizeof(error));
+    } else if (argc == 4 && strcmp(argv[0], "unpack") == 0 &&
+               strcmp(argv[2], "--output") == 0) {
+        result = bp_cpio_extract(argv[1], argv[3], &info, error, sizeof(error));
     } else if (argc == 2 && strcmp(argv[0], "verify") == 0) {
         result = bp_cpio_verify(argv[1], &info, error, sizeof(error));
     } else if (argc == 2 && strcmp(argv[0], "install") == 0) {
