@@ -168,10 +168,14 @@ static int ensure_pack_burning_progress(const char *source, char *error,
                      sbin_path);
         return -1;
     }
-    if (lstat(progress_path, &status) == 0) {
-        return 0;
+    if (lstat(progress_path, &status) == 0 && !S_ISREG(status.st_mode) &&
+        !S_ISLNK(status.st_mode)) {
+        bp_error_set(error, error_size,
+                     "rootfs burning-progress path is not a regular file or symlink: %s",
+                     progress_path);
+        return -1;
     }
-    if (errno != ENOENT) {
+    if (lstat(progress_path, &status) != 0 && errno != ENOENT) {
         bp_error_set(error, error_size, "inspect %s: %s",
                      progress_path, strerror(errno));
         return -1;
