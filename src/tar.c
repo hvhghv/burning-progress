@@ -485,11 +485,16 @@ static int bp_tar_gzip_verify_internal(const char *path,
     if (require_recovery_rootfs) {
         const struct tar_item *shell = tar_list_find(&paths, "bin/sh");
         const struct tar_item *progress = tar_list_find(&paths, "sbin/burning-progress");
-        if (shell == NULL || progress == NULL ||
-            !(S_ISREG(shell->mode) || S_ISLNK(shell->mode)) ||
+        if (shell == NULL ||
+            !(S_ISREG(shell->mode) || S_ISLNK(shell->mode))) {
+            bp_error_set(error, error_size,
+                         "rootfs is missing or invalid bin/sh");
+            goto cleanup;
+        }
+        if (progress == NULL ||
             !(S_ISREG(progress->mode) || S_ISLNK(progress->mode))) {
             bp_error_set(error, error_size,
-                         "rootfs is missing bin/sh or sbin/burning-progress");
+                         "rootfs is missing or invalid sbin/burning-progress");
             goto cleanup;
         }
     }
@@ -760,8 +765,11 @@ int bp_tar_gzip_pack(const char *source, const char *output_path,
     int status;
     int result = -1;
     int written;
+    struct bp_runtime_config runtime;
 
-    if (prepare_output_path(source, output_path, source_path, output,
+    if (bp_rootfs_source_verify(source, &runtime,
+                                error, error_size) != 0 ||
+        prepare_output_path(source, output_path, source_path, output,
                             error, error_size) != 0) {
         return -1;
     }

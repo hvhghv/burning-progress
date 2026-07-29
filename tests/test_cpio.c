@@ -126,6 +126,9 @@ int main(void)
     char template_tar[BP_PATH_CAPACITY];
     char template_extracted[BP_PATH_CAPACITY];
     char unsafe_hardlink_tar[BP_PATH_CAPACITY];
+    char invalid_cpio[BP_PATH_CAPACITY];
+    char invalid_tar_pack[BP_PATH_CAPACITY];
+    char temporary[BP_PATH_CAPACITY];
     char target[BP_PATH_CAPACITY];
     char error[BP_ERROR_CAPACITY] = {0};
     struct bp_rootfs_info info;
@@ -209,7 +212,7 @@ int main(void)
     write_prefixed_hardlink_tar(template_tar);
     error[0] = '\0';
     assert(bp_rootfs_verify(template_tar, &info, error, sizeof(error)) != 0);
-    assert(strstr(error, "missing bin/sh or sbin/burning-progress") != NULL);
+    assert(strstr(error, "missing or invalid sbin/burning-progress") != NULL);
     make_path(template_extracted, base, "/template-extracted");
     error[0] = '\0';
     assert(bp_rootfs_unpack(template_tar, template_extracted,
@@ -233,6 +236,28 @@ int main(void)
     assert(bp_rootfs_unpack(unsafe_hardlink_tar, template_extracted,
                             &info, error, sizeof(error)) != 0);
     assert(strstr(error, "unsafe tar hardlink target") != NULL);
+
+    make_path(path, source, "/sbin/burning-progress");
+    assert(unlink(path) == 0);
+    make_path(invalid_cpio, base, "/invalid-rootfs.cpio");
+    error[0] = '\0';
+    assert(bp_cpio_pack(source, invalid_cpio, &info,
+                        error, sizeof(error)) != 0);
+    assert(strstr(error, "missing sbin/burning-progress") != NULL);
+    assert(access(invalid_cpio, F_OK) != 0);
+    assert(snprintf(temporary, sizeof(temporary), "%s.tmp.%ld",
+                    invalid_cpio, (long)getpid()) > 0);
+    assert(access(temporary, F_OK) != 0);
+
+    make_path(invalid_tar_pack, base, "/invalid-rootfs.tar.gz");
+    error[0] = '\0';
+    assert(bp_tar_gzip_pack(source, invalid_tar_pack, &info,
+                            error, sizeof(error)) != 0);
+    assert(strstr(error, "missing sbin/burning-progress") != NULL);
+    assert(access(invalid_tar_pack, F_OK) != 0);
+    assert(snprintf(temporary, sizeof(temporary), "%s.tmp.%ld",
+                    invalid_tar_pack, (long)getpid()) > 0);
+    assert(access(temporary, F_OK) != 0);
 
     puts("test_cpio: OK");
     return 0;

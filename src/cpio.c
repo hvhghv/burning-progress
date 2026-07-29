@@ -537,11 +537,15 @@ int bp_cpio_verify(const char *archive, struct bp_rootfs_info *info,
     {
         const struct path_item *shell = find_path(&paths, "bin/sh");
         const struct path_item *progress = find_path(&paths, "sbin/burning-progress");
-        if (shell == NULL || progress == NULL ||
-            !(S_ISREG(shell->mode) || S_ISLNK(shell->mode)) ||
+        if (shell == NULL ||
+            !(S_ISREG(shell->mode) || S_ISLNK(shell->mode))) {
+            bp_error_set(error, error_size, "rootfs is missing or invalid bin/sh");
+            goto cleanup;
+        }
+        if (progress == NULL ||
             !(S_ISREG(progress->mode) || S_ISLNK(progress->mode))) {
             bp_error_set(error, error_size,
-                         "rootfs is missing bin/sh or sbin/burning-progress");
+                         "rootfs is missing or invalid sbin/burning-progress");
             goto cleanup;
         }
     }
@@ -582,9 +586,15 @@ int bp_cpio_pack(const char *source, const char *output,
     char output_copy[BP_PATH_CAPACITY];
     char *separator;
     FILE *file = NULL;
+    struct bp_runtime_config runtime;
     int descriptor;
     int result = -1;
+    int written;
 
+    if (bp_rootfs_source_verify(source, &runtime,
+                                error, error_size) != 0) {
+        return -1;
+    }
     if (stat(source, &status) != 0 || !S_ISDIR(status.st_mode)) {
         bp_error_set(error, error_size, "CPIO source is not a directory");
         return -1;
@@ -614,7 +624,9 @@ int bp_cpio_pack(const char *source, const char *output,
         goto cleanup;
     }
     qsort(paths.items, paths.count, sizeof(paths.items[0]), compare_path_items);
-    if (snprintf(temporary, sizeof(temporary), "%s.tmp.%ld", output, (long)getpid()) < 0) {
+    written = snprintf(temporary, sizeof(temporary), "%s.tmp.%ld",
+                       output, (long)getpid());
+    if (written < 0 || (size_t)written >= sizeof(temporary)) {
         bp_error_set(error, error_size, "cannot build temporary CPIO path");
         goto cleanup;
     }

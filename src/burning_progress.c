@@ -372,11 +372,14 @@ static int command_rootfs_configure(const char *directory)
     struct bp_runtime_config config;
     char error[BP_ERROR_CAPACITY] = {0};
     char config_path[BP_PATH_CAPACITY];
+    int entry_created;
 
     if (bp_rootfs_runtime_config_load(directory, &config,
                                       error, sizeof(error)) != 0 ||
         prompt_entry_mode(&config, error, sizeof(error)) != 0 ||
         prompt_entry_path(&config, error, sizeof(error)) != 0 ||
+        bp_rootfs_default_entry_ensure(directory, &config, &entry_created,
+                                       error, sizeof(error)) != 0 ||
         bp_rootfs_runtime_config_save(directory, &config,
                                       error, sizeof(error)) != 0 ||
         bp_path(config_path, sizeof(config_path), directory,
@@ -387,6 +390,7 @@ static int command_rootfs_configure(const char *directory)
     printf("configuration=%s\n", config_path);
     printf("entryMode=%s\n", bp_entry_mode_name(config.entry_mode));
     printf("entry=%s\n", config.entry);
+    printf("entryCreated=%s\n", entry_created ? "true" : "false");
     return 0;
 }
 

@@ -77,6 +77,8 @@ entry=/entry.sh
 - `entryMode`: `supervised` or `handoff`.
 - `entry`: absolute path inside the RAM root, without `..` components.
 - Missing runtime configuration defaults to supervised `/entry.sh`.
+- Interactive rootfs configuration creates a missing default `/entry.sh` as
+  an executable `exec /bin/sh` script, but never overwrites an existing entry.
 - An exact `handoff` value is required to transfer PID 1.
 - `handoff` with a missing or invalid entry is rejected before `pivot_root`.
 
@@ -169,6 +171,11 @@ burning-progress rootfs configure <directory>
 burning-progress rootfs verify <file>
 burning-progress rootfs install <file>
 ```
+
+Packing preflights the recovery source before opening a temporary archive, so
+missing required files or an invalid handoff entry fail without writing the
+rootfs payload. CPIO output uses uncompressed `newc`; tar.gz is the compressed
+distribution format.
 
 State writes and installation use a same-filesystem temporary file, `fsync`,
 atomic rename, and parent-directory `fsync`. Uninstall restores the backup only

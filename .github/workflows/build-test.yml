@@ -383,6 +383,19 @@ jobs:
           grep -q '^entryMode=handoff$' "$config_root/etc/burning-progress.conf"
           grep -q '^entry=/sbin/init$' "$config_root/etc/burning-progress.conf"
 
+          default_config_root="$RUNNER_TEMP/default-interactive-config-root"
+          rm -rf "$default_config_root"
+          mkdir -p "$default_config_root"
+          printf '\n\n' | \
+            "$QEMU_RUNNER" -L "$BUSYBOX_ROOTFS" \
+              build/bin/burning-progress rootfs configure "$default_config_root"
+          grep -q '^entryMode=supervised$' \
+            "$default_config_root/etc/burning-progress.conf"
+          grep -q '^entry=/entry.sh$' \
+            "$default_config_root/etc/burning-progress.conf"
+          test -x "$default_config_root/entry.sh"
+          grep -q '^exec /bin/sh$' "$default_config_root/entry.sh"
+
       - name: Test CPIO and tar.gz recovery rootfs archives
         run: |
           set -euo pipefail

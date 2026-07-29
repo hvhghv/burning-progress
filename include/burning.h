@@ -125,12 +125,18 @@ int bp_rootfs_extract(const char *archive, const char *destination,
                       struct bp_rootfs_info *info, char *error, size_t error_size);
 int bp_rootfs_unpack(const char *archive, const char *destination,
                      struct bp_rootfs_info *info, char *error, size_t error_size);
+int bp_rootfs_source_verify(const char *rootfs,
+                            struct bp_runtime_config *runtime,
+                            char *error, size_t error_size);
 int bp_rootfs_runtime_config_load(const char *rootfs,
                                   struct bp_runtime_config *config,
                                   char *error, size_t error_size);
 int bp_rootfs_runtime_config_save(const char *rootfs,
                                   const struct bp_runtime_config *config,
                                   char *error, size_t error_size);
+int bp_rootfs_default_entry_ensure(const char *rootfs,
+                                   const struct bp_runtime_config *config,
+                                   int *created, char *error, size_t error_size);
 int bp_rootfs_install(const char *root, const char *archive,
                       struct bp_rootfs_info *info, char *error, size_t error_size);
 int bp_rootfs_verify_installed(const char *root, struct bp_rootfs_info *info,

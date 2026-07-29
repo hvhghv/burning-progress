@@ -58,7 +58,13 @@ $(BIN_DIR) $(TEST_DIR):
 	mkdir -p $@
 
 test-cli: $(BIN_DIR)/burning-progress
-	rm -rf $(BUILD_DIR)/test-rootfs-config
+	rm -rf $(BUILD_DIR)/test-rootfs-config \
+		$(BUILD_DIR)/test-rootfs-config-default \
+		$(BUILD_DIR)/test-rootfs-config-entry-link \
+		$(BUILD_DIR)/test-rootfs-config-entry-outside \
+		$(BUILD_DIR)/test-rootfs-config-link \
+		$(BUILD_DIR)/test-rootfs-config-outside \
+		$(BUILD_DIR)/test-rootfs-invalid-config
 	mkdir -p $(BUILD_DIR)/test-rootfs-config
 	printf '%s\n' invalid handoff relative /sbin/init | \
 		$(BIN_DIR)/burning-progress rootfs configure $(BUILD_DIR)/test-rootfs-config
@@ -70,6 +76,24 @@ test-cli: $(BIN_DIR)/burning-progress
 	grep -q '^entryMode=handoff$$' $(BUILD_DIR)/test-rootfs-config/etc/burning-progress.conf
 	if : | $(BIN_DIR)/burning-progress rootfs configure \
 		$(BUILD_DIR)/test-rootfs-config; then exit 1; fi
+	mkdir -p $(BUILD_DIR)/test-rootfs-config-default
+	printf '\n\n' | $(BIN_DIR)/burning-progress rootfs configure \
+		$(BUILD_DIR)/test-rootfs-config-default
+	test -x $(BUILD_DIR)/test-rootfs-config-default/entry.sh
+	grep -q '^exec /bin/sh$$' $(BUILD_DIR)/test-rootfs-config-default/entry.sh
+	printf '%s\n' '#!/bin/sh' 'echo preserved' > \
+		$(BUILD_DIR)/test-rootfs-config-default/entry.sh
+	chmod 0755 $(BUILD_DIR)/test-rootfs-config-default/entry.sh
+	printf '\n\n' | $(BIN_DIR)/burning-progress rootfs configure \
+		$(BUILD_DIR)/test-rootfs-config-default
+	grep -q '^echo preserved$$' $(BUILD_DIR)/test-rootfs-config-default/entry.sh
+	mkdir -p $(BUILD_DIR)/test-rootfs-config-entry-link \
+		$(BUILD_DIR)/test-rootfs-config-entry-outside
+	ln -s ../test-rootfs-config-entry-outside/entry.sh \
+		$(BUILD_DIR)/test-rootfs-config-entry-link/entry.sh
+	if printf '\n\n' | $(BIN_DIR)/burning-progress rootfs configure \
+		$(BUILD_DIR)/test-rootfs-config-entry-link; then exit 1; fi
+	test ! -e $(BUILD_DIR)/test-rootfs-config-entry-outside/entry.sh
 	mkdir -p $(BUILD_DIR)/test-rootfs-config-link \
 		$(BUILD_DIR)/test-rootfs-config-outside
 	ln -s ../test-rootfs-config-outside $(BUILD_DIR)/test-rootfs-config-link/etc
