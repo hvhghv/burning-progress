@@ -16,6 +16,11 @@ static void make_file(const char *path, const char *contents, mode_t mode)
     assert(close(descriptor) == 0);
 }
 
+static void make_dir(const char *path)
+{
+    assert(mkdir(path, 0755) == 0);
+}
+
 int main(void)
 {
     char template[] = "/tmp/burning-progress-test.XXXXXX";
@@ -56,6 +61,45 @@ int main(void)
     assert(length > 0);
     target[length] = '\0';
     assert(strcmp(target, "../lib/systemd/systemd") == 0);
+
+    {
+        char source_template[] = "/tmp/burning-progress-rootfs-source.XXXXXX";
+        char target_template[] = "/tmp/burning-progress-rootfs-target.XXXXXX";
+        char archive[BP_PATH_CAPACITY];
+        char source_bin[BP_PATH_CAPACITY];
+        char source_sbin[BP_PATH_CAPACITY];
+        char source_sh[BP_PATH_CAPACITY];
+        char source_progress[BP_PATH_CAPACITY];
+        char config_path[BP_PATH_CAPACITY];
+        char *source_root = mkdtemp(source_template);
+        char *target_root = mkdtemp(target_template);
+        char *contents = NULL;
+        struct bp_rootfs_info rootfs_info;
+
+        assert(source_root != NULL);
+        assert(target_root != NULL);
+        snprintf(source_bin, sizeof(source_bin), "%s/bin", source_root);
+        snprintf(source_sbin, sizeof(source_sbin), "%s/sbin", source_root);
+        make_dir(source_bin);
+        make_dir(source_sbin);
+        snprintf(source_sh, sizeof(source_sh), "%s/bin/sh", source_root);
+        snprintf(source_progress, sizeof(source_progress), "%s/sbin/burning-progress",
+                 source_root);
+        make_file(source_sh, "sh", 0755);
+        make_file(source_progress, "progress", 0755);
+        snprintf(archive, sizeof(archive), "%s/rootfs.cpio", target_root);
+        assert(bp_cpio_pack(source_root, archive, &rootfs_info,
+                            error, sizeof(error)) == 0);
+        assert(bp_rootfs_install(target_root, archive, &rootfs_info,
+                                 error, sizeof(error)) == 0);
+        snprintf(config_path, sizeof(config_path),
+                 "%s/etc/BurningProcess/config", target_root);
+        assert(bp_read_text_file(config_path, &contents, 1024U,
+                                 error, sizeof(error)) == 0);
+        assert(strstr(contents, "timeout=5") != NULL);
+        assert(strstr(contents, "default=normal") != NULL);
+        free(contents);
+    }
 
     printf("test_install: OK\n");
     return 0;

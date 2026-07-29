@@ -333,6 +333,10 @@ static int disable_swap(int console)
     int first = 1;
 
     if (file == NULL) {
+        if (errno == ENOENT) {
+            console_printf(console, "Swap information unavailable; continuing.\n");
+            return 0;
+        }
         console_printf(console, "Cannot inspect swap: %s\n", strerror(errno));
         return -1;
     }
@@ -443,9 +447,14 @@ static int unmount_old_root(int console)
         qsort(mounts, count, sizeof(*mounts), compare_mount_depth);
     }
     for (index = 0U; index < count; ++index) {
-        if (umount2(mounts[index], 0) != 0 && errno != EINVAL && errno != ENOENT) {
-            console_printf(console, "Cannot unmount %s: %s\n", mounts[index], strerror(errno));
-            goto cleanup;
+        if (umount2(mounts[index], 0) != 0) {
+            if (errno == EBUSY && umount2(mounts[index], MNT_DETACH) == 0) {
+                continue;
+            }
+            if (errno != EINVAL && errno != ENOENT) {
+                console_printf(console, "Cannot unmount %s: %s\n", mounts[index], strerror(errno));
+                goto cleanup;
+            }
         }
     }
     result = 0;
@@ -617,7 +626,11 @@ int bp_stage2(void)
         shell_loop();
     }
     close_extra_descriptors();
-    if (disable_swap(STDERR_FILENO) != 0 || unmount_old_root(STDERR_FILENO) != 0) {
+    if (disable_swap(STDERR_FILENO) != 0) {
+        dprintf(STDERR_FILENO, "Swap remains active or cannot be inspected.\n");
+        shell_loop();
+    }
+    if (unmount_old_root(STDERR_FILENO) != 0) {
         dprintf(STDERR_FILENO,
                 "Old root is still mounted. System-disk flashing is disabled.\n");
         shell_loop();

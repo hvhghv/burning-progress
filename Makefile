@@ -64,7 +64,9 @@ test-cli: $(BIN_DIR)/burning-progress
 		$(BUILD_DIR)/test-rootfs-config-entry-outside \
 		$(BUILD_DIR)/test-rootfs-config-link \
 		$(BUILD_DIR)/test-rootfs-config-outside \
-		$(BUILD_DIR)/test-rootfs-invalid-config
+		$(BUILD_DIR)/test-rootfs-invalid-config \
+		$(BUILD_DIR)/test-rootfs-pack-auto \
+		$(BUILD_DIR)/test-enable-check
 	mkdir -p $(BUILD_DIR)/test-rootfs-config
 	printf '%s\n' invalid handoff relative /sbin/init | \
 		$(BIN_DIR)/burning-progress rootfs configure $(BUILD_DIR)/test-rootfs-config
@@ -105,6 +107,19 @@ test-cli: $(BIN_DIR)/burning-progress
 	mkdir -p $(BUILD_DIR)/test-rootfs-invalid-config/etc/burning-progress.conf
 	if printf '\n\n' | $(BIN_DIR)/burning-progress rootfs configure \
 		$(BUILD_DIR)/test-rootfs-invalid-config; then exit 1; fi
+	mkdir -p $(BUILD_DIR)/test-rootfs-pack-auto/rootfs/bin \
+		$(BUILD_DIR)/test-rootfs-pack-auto/out
+	printf '%s\n' '#!/bin/sh' > \
+		$(BUILD_DIR)/test-rootfs-pack-auto/rootfs/bin/sh
+	chmod 0755 $(BUILD_DIR)/test-rootfs-pack-auto/rootfs/bin/sh
+	$(BIN_DIR)/burning-progress rootfs pack \
+		$(BUILD_DIR)/test-rootfs-pack-auto/rootfs \
+		--output $(BUILD_DIR)/test-rootfs-pack-auto/out/rootfs.cpio
+	test -f $(BUILD_DIR)/test-rootfs-pack-auto/rootfs/sbin/burning-progress
+	test -f $(BUILD_DIR)/test-rootfs-pack-auto/out/rootfs.cpio
+	mkdir -p $(BUILD_DIR)/test-enable-check
+	if $(BIN_DIR)/burning-progress --root $(BUILD_DIR)/test-enable-check enable; \
+		then exit 1; fi
 
 test: $(TEST_DIR)/test_config $(TEST_DIR)/test_install $(TEST_DIR)/test_cpio test-cli
 	$(TEST_DIR)/test_config

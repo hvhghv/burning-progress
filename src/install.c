@@ -182,11 +182,8 @@ int bp_install(const char *root, const char *init_source, const char *progress_s
     char progress_destination[BP_PATH_CAPACITY];
     char init_path[BP_PATH_CAPACITY];
     char state_path[BP_PATH_CAPACITY];
-    char config_path[BP_PATH_CAPACITY];
     char state_text[512];
-    char config_text[256];
     struct install_state state;
-    struct bp_host_config config;
     struct stat status;
     int backup_created = 0;
     int config_created = 0;
@@ -205,8 +202,7 @@ int bp_install(const char *root, const char *init_source, const char *progress_s
     if (path_for(init_destination, root, BP_BURNING_INIT_PATH, error, error_size) != 0 ||
         path_for(progress_destination, root, BP_PROGRESS_PATH, error, error_size) != 0 ||
         path_for(init_path, root, BP_INIT_PATH, error, error_size) != 0 ||
-        path_for(state_path, root, BP_INSTALL_STATE_PATH, error, error_size) != 0 ||
-        path_for(config_path, root, BP_HOST_CONFIG_PATH, error, error_size) != 0) {
+        path_for(state_path, root, BP_INSTALL_STATE_PATH, error, error_size) != 0) {
         return -1;
     }
     if (lstat(init_destination, &status) == 0 || errno != ENOENT ||
@@ -230,15 +226,8 @@ int bp_install(const char *root, const char *init_source, const char *progress_s
                         error, error_size) != 0) {
         goto rollback;
     }
-    if (lstat(config_path, &status) != 0 && errno == ENOENT) {
-        bp_host_config_default(&config);
-        if (bp_host_config_format(&config, config_text, sizeof(config_text),
-                                  error, error_size) != 0 ||
-            bp_atomic_write(config_path, config_text, strlen(config_text), 0600,
-                            error, error_size) != 0) {
-            goto rollback;
-        }
-        config_created = 1;
+    if (bp_host_config_ensure(root, &config_created, error, error_size) != 0) {
+        goto rollback;
     }
     if (bp_atomic_symlink(BP_BURNING_INIT_PATH, init_path, error, error_size) != 0) {
         goto rollback;
@@ -248,6 +237,7 @@ int bp_install(const char *root, const char *init_source, const char *progress_s
 rollback:
     if (result != 0) {
         char backup_path[BP_PATH_CAPACITY];
+        char config_path[BP_PATH_CAPACITY];
         if (backup_created &&
             path_for(backup_path, root, BP_ORIGINAL_INIT_PATH, error, error_size) == 0) {
             (void)bp_remove_synced(backup_path, &removed, error, error_size);
@@ -255,7 +245,8 @@ rollback:
         (void)bp_remove_synced(state_path, &removed, error, error_size);
         (void)bp_remove_synced(progress_destination, &removed, error, error_size);
         (void)bp_remove_synced(init_destination, &removed, error, error_size);
-        if (config_created) {
+        if (config_created &&
+            path_for(config_path, root, BP_HOST_CONFIG_PATH, error, error_size) == 0) {
             (void)bp_remove_synced(config_path, &removed, error, error_size);
         }
     }

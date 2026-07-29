@@ -899,8 +899,11 @@ int bp_rootfs_install(const char *root, const char *archive,
         bp_error_set(error, error_size, "cannot format rootfs checksum");
         return -1;
     }
-    return bp_atomic_write(checksum_path, checksum, (size_t)length, 0600,
-                           error, error_size);
+    if (bp_atomic_write(checksum_path, checksum, (size_t)length, 0600,
+                        error, error_size) != 0) {
+        return -1;
+    }
+    return bp_host_config_ensure(root, NULL, error, error_size);
 }
 
 int bp_rootfs_verify_installed(const char *root, struct bp_rootfs_info *info,

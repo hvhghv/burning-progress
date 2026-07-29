@@ -123,6 +123,66 @@ static int executable_directory(char *directory, size_t directory_size)
     return 0;
 }
 
+static int checked_directory(const char *path, char *checked,
+                             size_t checked_size, char *error,
+                             size_t error_size)
+{
+    struct stat status;
+    size_t length;
+
+    if (path == NULL || path[0] == '\0' || strlen(path) >= checked_size) {
+        bp_error_set(error, error_size, "invalid directory: %s",
+                     path == NULL ? "(null)" : path);
+        return -1;
+    }
+    strcpy(checked, path);
+    length = strlen(checked);
+    while (length > 1U && checked[length - 1U] == '/') {
+        checked[--length] = '\0';
+    }
+    if (lstat(checked, &status) != 0 || !S_ISDIR(status.st_mode)) {
+        bp_error_set(error, error_size, "not a real directory: %s", path);
+        return -1;
+    }
+    return 0;
+}
+
+static int ensure_pack_burning_progress(const char *source, char *error,
+                                        size_t error_size)
+{
+    char checked_source[BP_PATH_CAPACITY];
+    char sbin_path[BP_PATH_CAPACITY];
+    char progress_path[BP_PATH_CAPACITY];
+    struct stat status;
+
+    if (checked_directory(source, checked_source, sizeof(checked_source),
+                          error, error_size) != 0 ||
+        bp_path(sbin_path, sizeof(sbin_path), checked_source, "/sbin",
+                error, error_size) != 0 ||
+        bp_path(progress_path, sizeof(progress_path), checked_source,
+                BP_PROGRESS_PATH, error, error_size) != 0) {
+        return -1;
+    }
+    if (lstat(sbin_path, &status) == 0 && !S_ISDIR(status.st_mode)) {
+        bp_error_set(error, error_size, "rootfs sbin path is not a real directory: %s",
+                     sbin_path);
+        return -1;
+    }
+    if (lstat(progress_path, &status) == 0) {
+        return 0;
+    }
+    if (errno != ENOENT) {
+        bp_error_set(error, error_size, "inspect %s: %s",
+                     progress_path, strerror(errno));
+        return -1;
+    }
+    if (bp_atomic_copy("/proc/self/exe", progress_path, 0755,
+                       error, error_size) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
 static int command_install(const char *root, int argc, char **argv)
 {
     char directory[BP_PATH_CAPACITY];
@@ -165,6 +225,10 @@ static int command_enable(const char *root, int once)
     char error[BP_ERROR_CAPACITY];
     int removed;
 
+    if (!bp_is_installed(root)) {
+        fprintf(stderr, "burning-progress: burning-progress is not installed; run install first\n");
+        return -1;
+    }
     if (full_path(enable, sizeof(enable), root, BP_ENABLE_PATH) != 0 ||
         full_path(only_once, sizeof(only_once), root, BP_ONLY_ONCE_PATH) != 0) {
         return -1;
@@ -411,6 +475,10 @@ static int command_rootfs(const char *root, int argc, char **argv)
                 (length >= 4U && strcmp(argv[3] + length - 4U, ".tgz") == 0)) {
                 format = BP_ROOTFS_TAR_GZIP;
             }
+        }
+        if (ensure_pack_burning_progress(argv[1], error, sizeof(error)) != 0) {
+            fprintf(stderr, "burning-progress: %s\n", error);
+            return -1;
         }
         result = bp_rootfs_pack(argv[1], argv[3], format, &info, error, sizeof(error));
     } else if (argc == 4 && strcmp(argv[0], "unpack") == 0 &&

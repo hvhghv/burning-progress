@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 static char *bp_trim(char *text)
 {
@@ -156,6 +157,41 @@ int bp_host_config_format(const struct bp_host_config *config, char *output,
     if (length < 0 || (size_t)length >= output_size) {
         bp_error_set(error, error_size, "configuration output buffer is too small");
         return -1;
+    }
+    return 0;
+}
+
+int bp_host_config_ensure(const char *root, int *created,
+                          char *error, size_t error_size)
+{
+    char path[BP_PATH_CAPACITY];
+    char text[256];
+    struct bp_host_config config;
+    struct stat status;
+
+    if (created != NULL) {
+        *created = 0;
+    }
+    if (bp_path(path, sizeof(path), root, BP_HOST_CONFIG_PATH,
+                error, error_size) != 0) {
+        return -1;
+    }
+    if (lstat(path, &status) == 0) {
+        return 0;
+    }
+    if (errno != ENOENT) {
+        bp_error_set(error, error_size, "inspect %s: %s", path, strerror(errno));
+        return -1;
+    }
+    bp_host_config_default(&config);
+    if (bp_host_config_format(&config, text, sizeof(text),
+                              error, error_size) != 0 ||
+        bp_atomic_write(path, text, strlen(text), 0600,
+                        error, error_size) != 0) {
+        return -1;
+    }
+    if (created != NULL) {
+        *created = 1;
     }
     return 0;
 }

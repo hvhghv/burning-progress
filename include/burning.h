@@ -85,6 +85,8 @@ int bp_host_config_parse(const char *text, struct bp_host_config *config,
                          char *error, size_t error_size);
 int bp_host_config_format(const struct bp_host_config *config, char *output,
                           size_t output_size, char *error, size_t error_size);
+int bp_host_config_ensure(const char *root, int *created,
+                          char *error, size_t error_size);
 const char *bp_boot_choice_name(enum bp_boot_choice choice);
 int bp_boot_choice_parse(const char *text, enum bp_boot_choice *choice);
 

@@ -243,9 +243,11 @@ sudo build/bin/burning-progress rootfs install ./rootfs.tar.gz
 
 tar.gz 的 `rootfs unpack` 可用于准备尚未加入 `burning-progress` 的基础 rootfs；它执行完整的路径和类型安全检查，但不要求 recovery 入口文件已经存在。如果归档中所有内容都位于唯一的显式顶层目录内，该目录会自动剥离。`rootfs verify`、`rootfs install` 和启动流程仍要求 `/bin/sh`、`/sbin/burning-progress` 及 handoff 入口完整有效。
 
-`rootfs pack` 会在创建临时归档前检查上述必要文件、运行配置和 handoff 入口，预检失败不会生成输出或 `.tmp.<pid>` 文件。CPIO 使用未压缩的 `newc` 格式，大小通常接近 rootfs 内所有文件的总逻辑大小；若需要减小归档体积，应输出 `.tar.gz` 或使用 `--format tar.gz`。
+`rootfs pack` 会在创建临时归档前检查上述必要文件、运行配置和 handoff 入口，预检失败不会生成输出或 `.tmp.<pid>` 文件。若 `sbin/burning-progress` 缺失，命令会先把当前执行中的 `burning-progress` 自动复制进去再继续打包。CPIO 使用未压缩的 `newc` 格式，大小通常接近 rootfs 内所有文件的总逻辑大小；若需要减小归档体积，应输出 `.tar.gz` 或使用 `--format tar.gz`。
 
 解包后可执行 `rootfs configure DIRECTORY` 交互生成 `DIRECTORY/etc/burning-progress.conf`。命令依次询问 `entryMode` 和 `entry`；方括号内显示现有值或默认值，直接回车保留该值。最终入口仍为默认 `/entry.sh` 且文件不存在时，会以 `0755` 权限自动创建内容为 `exec /bin/sh` 的入口脚本，已有文件不会被覆盖；自定义入口路径由用户自行准备。非法输入会重新询问，输入在完成前结束时不会写入配置。配置文件使用 `0644` 权限原子替换；为防止写出目标 rootfs，rootfs 本身及其 `etc` 必须是真实目录而不是符号链接。
+
+`rootfs install` 在安装归档后会自动确保一次 `/etc/BurningProcess/config` 存在；如果它原本不存在，会写入默认值 `timeout=5` 和 `default=normal`，已有配置不会被覆盖。
 
 解包目标目录不存在时会自动创建；如果目录已经存在，则必须为空。归档校验或解包失败时命令返回非零状态。解包不是事务操作，失败后应删除目标目录，不要使用其中可能残留的文件。
 
@@ -296,6 +298,8 @@ sudo /sbin/burning-progress enable
 # 等价于
 sudo /sbin/burning-progress enable --once
 ```
+
+`enable` 需要先完成 `install`，否则会直接拒绝。
 
 持久启用：
 
