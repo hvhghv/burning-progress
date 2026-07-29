@@ -394,6 +394,149 @@ static int compare_mount_depth(const void *left, const void *right)
     return strcmp(*right_path, *left_path);
 }
 
+static int old_root_path_held(const char *path)
+{
+    size_t length = strlen(BP_OLD_ROOT);
+    return strncmp(path, BP_OLD_ROOT, length) == 0 &&
+           (path[length] == '\0' || path[length] == '/');
+}
+
+static int process_holds_old_root(pid_t pid)
+{
+    char path[BP_PATH_CAPACITY];
+    char target[BP_PATH_CAPACITY];
+    DIR *directory;
+    struct dirent *entry;
+    ssize_t length;
+
+    if (pid <= 1 || pid == getpid()) {
+        return 0;
+    }
+    if (snprintf(path, sizeof(path), "/proc/%ld/cwd", (long)pid) >= (int)sizeof(path)) {
+        return 0;
+    }
+    length = readlink(path, target, sizeof(target) - 1U);
+    if (length >= 0) {
+        target[length] = '\0';
+        if (old_root_path_held(target)) {
+            return 1;
+        }
+    }
+    if (snprintf(path, sizeof(path), "/proc/%ld/root", (long)pid) >= (int)sizeof(path)) {
+        return 0;
+    }
+    length = readlink(path, target, sizeof(target) - 1U);
+    if (length >= 0) {
+        target[length] = '\0';
+        if (old_root_path_held(target)) {
+            return 1;
+        }
+    }
+    if (snprintf(path, sizeof(path), "/proc/%ld/fd", (long)pid) >= (int)sizeof(path)) {
+        return 0;
+    }
+    directory = opendir(path);
+    if (directory == NULL) {
+        return 0;
+    }
+    while ((entry = readdir(directory)) != NULL) {
+        if (!isdigit((unsigned char)entry->d_name[0])) {
+            continue;
+        }
+        if (snprintf(path, sizeof(path), "/proc/%ld/fd/%s",
+                     (long)pid, entry->d_name) >= (int)sizeof(path)) {
+            continue;
+        }
+        length = readlink(path, target, sizeof(target) - 1U);
+        if (length >= 0) {
+            target[length] = '\0';
+            if (old_root_path_held(target)) {
+                closedir(directory);
+                return 1;
+            }
+        }
+    }
+    closedir(directory);
+    return 0;
+}
+
+static int terminate_old_root_holders(int console)
+{
+    DIR *directory = opendir("/proc");
+    struct dirent *entry;
+    int sent_term = 0;
+    int sent_kill = 0;
+
+    if (directory == NULL) {
+        console_printf(console, "Cannot inspect /proc for old-root holders: %s\n",
+                       strerror(errno));
+        return -1;
+    }
+    while ((entry = readdir(directory)) != NULL) {
+        char *end = NULL;
+        long value;
+        pid_t pid;
+
+        if (!isdigit((unsigned char)entry->d_name[0])) {
+            continue;
+        }
+        errno = 0;
+        value = strtol(entry->d_name, &end, 10);
+        if (errno != 0 || end == NULL || *end != '\0' || value <= 1L) {
+            continue;
+        }
+        pid = (pid_t)value;
+        if (!process_holds_old_root(pid)) {
+            continue;
+        }
+        console_printf(console, "Terminating process %ld holding /oldroot\n", value);
+        if (kill(pid, SIGTERM) == 0) {
+            sent_term = 1;
+        }
+    }
+    closedir(directory);
+    if (sent_term) {
+        sleep(1U);
+    }
+    directory = opendir("/proc");
+    if (directory == NULL) {
+        return -1;
+    }
+    while ((entry = readdir(directory)) != NULL) {
+        char *end = NULL;
+        long value;
+        pid_t pid;
+
+        if (!isdigit((unsigned char)entry->d_name[0])) {
+            continue;
+        }
+        errno = 0;
+        value = strtol(entry->d_name, &end, 10);
+        if (errno != 0 || end == NULL || *end != '\0' || value <= 1L) {
+            continue;
+        }
+        pid = (pid_t)value;
+        if (!process_holds_old_root(pid)) {
+            continue;
+        }
+        console_printf(console, "Force killing process %ld holding /oldroot\n", value);
+        if (kill(pid, SIGKILL) == 0) {
+            sent_kill = 1;
+        }
+    }
+    closedir(directory);
+    if (sent_kill) {
+        int status;
+        for (;;) {
+            pid_t child = waitpid(-1, &status, WNOHANG);
+            if (child <= 0) {
+                break;
+            }
+        }
+    }
+    return 0;
+}
+
 static int unmount_old_root(int console)
 {
     FILE *file = fopen("/proc/self/mountinfo", "r");
@@ -631,6 +774,10 @@ int bp_stage2(void)
         shell_loop();
     }
     if (unmount_old_root(STDERR_FILENO) != 0) {
+        if (terminate_old_root_holders(STDERR_FILENO) == 0 &&
+            unmount_old_root(STDERR_FILENO) == 0) {
+            return 1;
+        }
         dprintf(STDERR_FILENO,
                 "Old root is still mounted. System-disk flashing is disabled.\n");
         shell_loop();
