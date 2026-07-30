@@ -100,7 +100,7 @@ int bp_rootfs_unpack(const char *archive, const char *destination,
     if (format == BP_ROOTFS_TAR_GZIP) {
         return bp_tar_gzip_unpack(archive, destination, info, error, error_size);
     }
-    return bp_cpio_extract(archive, destination, info, error, error_size);
+    return bp_cpio_unpack(archive, destination, info, error, error_size);
 }
 
 static int checked_rootfs_path(const char *rootfs,

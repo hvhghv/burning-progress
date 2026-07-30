@@ -108,6 +108,8 @@ int bp_cpio_verify(const char *archive, struct bp_rootfs_info *info,
                    char *error, size_t error_size);
 int bp_cpio_extract(const char *archive, const char *destination,
                     struct bp_rootfs_info *info, char *error, size_t error_size);
+int bp_cpio_unpack(const char *archive, const char *destination,
+                   struct bp_rootfs_info *info, char *error, size_t error_size);
 int bp_tar_gzip_pack(const char *source, const char *output,
                      struct bp_rootfs_info *info, char *error, size_t error_size);
 int bp_tar_gzip_verify(const char *archive, struct bp_rootfs_info *info,

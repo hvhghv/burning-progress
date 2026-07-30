@@ -226,6 +226,7 @@ build/bin/burning-progress rootfs pack ./rootfs --output ./rootfs.cpio
 build/bin/burning-progress rootfs verify ./rootfs.cpio
 build/bin/burning-progress rootfs unpack ./rootfs.cpio --output ./unpacked-rootfs
 sudo build/bin/burning-progress rootfs install ./rootfs.cpio
+sudo build/bin/burning-progress rootfs install ./rootfs.cpio --entry-file ./entry.sh
 ```
 
 tar.gz 使用相同命令；`.tar.gz` 和 `.tgz` 后缀会让 `pack` 自动选择格式，也可用 `--format` 显式指定：
@@ -237,6 +238,7 @@ build/bin/burning-progress rootfs verify ./rootfs.tar.gz
 build/bin/burning-progress rootfs unpack ./rootfs.tar.gz --output ./unpacked-rootfs
 build/bin/burning-progress rootfs configure ./unpacked-rootfs
 sudo build/bin/burning-progress rootfs install ./rootfs.tar.gz
+sudo build/bin/burning-progress rootfs install ./rootfs.tar.gz --entry-file ./entry.sh
 ```
 
 `verify`、`unpack`、`install` 和 PID 1 启动流程按文件 magic 检测格式，不依赖文件扩展名。为保持旧版本布局兼容及单文件原子替换，安装后的归档仍统一命名为 `/etc/BurningProcess/rootfs.cpio`，其中内容可以是 CPIO 或 tar.gz。
@@ -247,7 +249,7 @@ tar.gz 的 `rootfs unpack` 可用于准备尚未加入 `burning-progress` 的基
 
 解包后可执行 `rootfs configure DIRECTORY` 交互生成 `DIRECTORY/etc/burning-progress.conf`。命令依次询问 `entryMode` 和 `entry`；方括号内显示现有值或默认值，直接回车保留该值。最终入口仍为默认 `/entry.sh` 且文件不存在时，会以 `0755` 权限自动创建内容为 `exec /bin/sh` 的入口脚本，已有文件不会被覆盖；自定义入口路径由用户自行准备。非法输入会重新询问，输入在完成前结束时不会写入配置。配置文件使用 `0644` 权限原子替换；为防止写出目标 rootfs，rootfs 本身及其 `etc` 必须是真实目录而不是符号链接。
 
-`rootfs install` 在安装归档后会自动确保一次 `/etc/BurningProcess/config` 存在；如果它原本不存在，会写入默认值 `timeout=5` 和 `default=normal`，已有配置不会被覆盖。
+`rootfs install` 在安装归档后会自动确保一次 `/etc/BurningProcess/config` 存在；如果它原本不存在，会写入默认值 `timeout=5` 和 `default=normal`，已有配置不会被覆盖。`--entry-file <path>` 可以把指定脚本直接写入配置对应的 entry 路径，默认仍是 `/entry.sh`。
 
 解包目标目录不存在时会自动创建；如果目录已经存在，则必须为空。归档校验或解包失败时命令返回非零状态。解包不是事务操作，失败后应删除目标目录，不要使用其中可能残留的文件。
 

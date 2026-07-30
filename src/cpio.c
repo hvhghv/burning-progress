@@ -452,8 +452,9 @@ static const struct path_item *find_path(const struct path_list *paths, const ch
     return NULL;
 }
 
-int bp_cpio_verify(const char *archive, struct bp_rootfs_info *info,
-                   char *error, size_t error_size)
+static int bp_cpio_verify_internal(const char *archive, struct bp_rootfs_info *info,
+                                   int require_recovery_rootfs,
+                                   char *error, size_t error_size)
 {
     FILE *file = NULL;
     struct path_list paths = {0};
@@ -534,7 +535,7 @@ int bp_cpio_verify(const char *archive, struct bp_rootfs_info *info,
             goto cleanup;
         }
     }
-    {
+    if (require_recovery_rootfs) {
         const struct path_item *shell = find_path(&paths, "bin/sh");
         const struct path_item *progress = find_path(&paths, "sbin/burning-progress");
         if (shell == NULL ||
@@ -555,7 +556,7 @@ int bp_cpio_verify(const char *archive, struct bp_rootfs_info *info,
                                        error, error_size) != 0) {
         goto cleanup;
     }
-    if (info->runtime.entry_mode == BP_ENTRY_HANDOFF) {
+    if (require_recovery_rootfs && info->runtime.entry_mode == BP_ENTRY_HANDOFF) {
         const struct path_item *entry = find_path(&paths, info->runtime.entry + 1);
         if (entry == NULL || !S_ISREG(entry->mode)) {
             bp_error_set(error, error_size, "handoff entry is missing or not a regular file");
@@ -574,6 +575,12 @@ cleanup:
         fclose(file);
     }
     return result;
+}
+
+int bp_cpio_verify(const char *archive, struct bp_rootfs_info *info,
+                   char *error, size_t error_size)
+{
+    return bp_cpio_verify_internal(archive, info, 1, error, error_size);
 }
 
 int bp_cpio_pack(const char *source, const char *output,
@@ -757,8 +764,10 @@ static int copy_exact_to_fd(FILE *input, int output, uint32_t size)
     return read_padding(input, size);
 }
 
-int bp_cpio_extract(const char *archive, const char *destination,
-                    struct bp_rootfs_info *info, char *error, size_t error_size)
+static int bp_cpio_extract_internal(const char *archive, const char *destination,
+                                    struct bp_rootfs_info *info,
+                                    int require_recovery_rootfs,
+                                    char *error, size_t error_size)
 {
     FILE *file = NULL;
     struct path_list directories = {0};
@@ -766,7 +775,8 @@ int bp_cpio_extract(const char *archive, const char *destination,
     int result = -1;
     size_t index;
 
-    if (bp_cpio_verify(archive, info, error, error_size) != 0 ||
+    if (bp_cpio_verify_internal(archive, info, require_recovery_rootfs,
+                                error, error_size) != 0 ||
         bp_mkdir_p(destination, 0755, error, error_size) != 0 ||
         !directory_is_empty(destination)) {
         if (error[0] == '\0') {
@@ -874,6 +884,20 @@ cleanup:
     path_list_free(&directories);
     path_list_free(&symlinks);
     return result;
+}
+
+int bp_cpio_extract(const char *archive, const char *destination,
+                    struct bp_rootfs_info *info, char *error, size_t error_size)
+{
+    return bp_cpio_extract_internal(archive, destination, info, 1,
+                                    error, error_size);
+}
+
+int bp_cpio_unpack(const char *archive, const char *destination,
+                   struct bp_rootfs_info *info, char *error, size_t error_size)
+{
+    return bp_cpio_extract_internal(archive, destination, info, 0,
+                                    error, error_size);
 }
 
 int bp_rootfs_install(const char *root, const char *archive,

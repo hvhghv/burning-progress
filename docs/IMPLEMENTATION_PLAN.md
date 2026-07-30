@@ -169,7 +169,7 @@ burning-progress rootfs pack <directory> --output <file> [--format cpio|tar.gz]
 burning-progress rootfs unpack <file> --output <directory>
 burning-progress rootfs configure <directory>
 burning-progress rootfs verify <file>
-burning-progress rootfs install <file>
+burning-progress rootfs install <file> [--entry-file <path>]
 ```
 
 Packing preflights the recovery source before opening a temporary archive, so
